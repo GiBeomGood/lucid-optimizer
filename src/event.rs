@@ -1,13 +1,13 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::{Action, AddStep, App, Mode};
+use crate::app::{Action, AddFocus, AddState, App, Mode};
 
 pub fn key_to_action(app: &App, key: KeyEvent) -> Option<Action> {
     match &app.mode {
         Mode::List => list_action(key),
         Mode::Edit { .. } => edit_action(key),
         Mode::EditValue { .. } => value_input_action(key),
-        Mode::Adding(step) => adding_action(key, step),
+        Mode::Adding(state) => adding_action(key, state),
         Mode::ConfirmDelete { .. } => confirm_delete_action(key),
         Mode::QuitConfirm => quit_confirm_action(key),
     }
@@ -42,6 +42,8 @@ fn edit_action(key: KeyEvent) -> Option<Action> {
 
 fn value_input_action(key: KeyEvent) -> Option<Action> {
     match key.code {
+        KeyCode::Left => Some(Action::Left),
+        KeyCode::Right => Some(Action::Right),
         KeyCode::Char(c) if c.is_ascii_digit() || c == '-' => Some(Action::InputChar(c)),
         KeyCode::Backspace => Some(Action::Backspace),
         KeyCode::Enter => Some(Action::Enter),
@@ -50,14 +52,13 @@ fn value_input_action(key: KeyEvent) -> Option<Action> {
     }
 }
 
-fn adding_action(key: KeyEvent, step: &AddStep) -> Option<Action> {
-    let is_input_step = matches!(
-        step,
-        AddStep::InputValue1 { .. } | AddStep::InputValue2 { .. }
-    );
+fn adding_action(key: KeyEvent, state: &AddState) -> Option<Action> {
+    let is_input_focus = matches!(state.focus, AddFocus::InputValue1 | AddFocus::InputValue2);
 
-    if is_input_step {
+    if is_input_focus {
         return match key.code {
+            KeyCode::Left => Some(Action::Left),
+            KeyCode::Right => Some(Action::Right),
             KeyCode::Char(c) if c.is_ascii_digit() || c == '-' => Some(Action::InputChar(c)),
             KeyCode::Backspace => Some(Action::Backspace),
             KeyCode::Enter => Some(Action::Enter),

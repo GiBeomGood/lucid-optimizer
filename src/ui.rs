@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
-use crate::app::{AddStep, App, Mode};
+use crate::app::{AddFocus, AddState, App, Mode};
 use crate::item::OptionKind;
 
 const ACCENT: Color = Color::Rgb(180, 170, 255);
@@ -30,8 +30,8 @@ pub fn render(f: &mut Frame, app: &App) {
     render_hint(f, app, chunks[1]);
 
     match &app.mode {
-        Mode::Adding(step) => render_adding_overlay(f, app, step, area),
-        Mode::QuitConfirm => render_quit_confirm(f, area),
+        Mode::Adding(state) => render_adding_overlay(f, state, area),
+        Mode::QuitConfirm => render_quit_confirm(f, app, area),
         _ => {}
     }
 }
@@ -178,18 +178,11 @@ fn build_option_spans<'a>(
                 Span::styled(opt.value.to_string(), val_style),
             ]
         }
-        Mode::EditValue { item_idx: i, option_idx: o, buffer } if *i == item_idx => {
+        Mode::EditValue { item_idx: i, option_idx: o, buffer, cursor } if *i == item_idx => {
             if *o == opt_idx {
-                let box_str = format!("[{}_]", buffer);
-                vec![
-                    Span::styled(label, Style::default().fg(ACCENT)),
-                    Span::styled(
-                        box_str,
-                        Style::default()
-                            .fg(ACCENT)
-                            .add_modifier(Modifier::REVERSED),
-                    ),
-                ]
+                let mut spans = vec![Span::styled(label, Style::default().fg(ACCENT))];
+                spans.extend(cursor_spans(buffer, *cursor));
+                spans
             } else {
                 vec![
                     Span::styled(label, Style::default().fg(ACCENT_DIM)),
@@ -198,6 +191,24 @@ fn build_option_spans<'a>(
             }
         }
         _ => vec![Span::raw(label), Span::raw(opt.value.to_string())],
+    }
+}
+
+fn cursor_spans(buf: &str, cursor: usize) -> Vec<Span<'static>> {
+    if cursor >= buf.len() {
+        vec![
+            Span::raw(buf.to_string()),
+            Span::styled(" ", Style::default().add_modifier(Modifier::REVERSED)),
+        ]
+    } else {
+        vec![
+            Span::raw(buf[..cursor].to_string()),
+            Span::styled(
+                buf[cursor..cursor + 1].to_string(),
+                Style::default().add_modifier(Modifier::REVERSED),
+            ),
+            Span::raw(buf[cursor + 1..].to_string()),
+        ]
     }
 }
 
@@ -220,28 +231,29 @@ fn render_hint(f: &mut Frame, app: &App, area: Rect) {
         ]),
         Mode::EditValue { .. } => hint_line(&[
             ("숫자/-", "입력"),
+            ("←→", "커서"),
             ("Backspace", "삭제"),
             ("Enter", "적용"),
             ("Esc", "취소"),
         ]),
-        Mode::Adding(step) => {
-            let step_label = match step {
-                AddStep::SelectKind1 { .. } => "옵션1 선택",
-                AddStep::InputValue1 { .. } => "값1 입력",
-                AddStep::SelectKind2 { .. } => "옵션2 선택",
-                AddStep::InputValue2 { .. } => "값2 입력",
+        Mode::Adding(state) => {
+            let step_label = match state.focus {
+                AddFocus::SelectKind1 => "옵션 1 종류 선택",
+                AddFocus::InputValue1 => "옵션 1 값 입력",
+                AddFocus::SelectKind2 => "옵션 2 종류 선택",
+                AddFocus::InputValue2 => "옵션 2 값 입력",
             };
             let mut spans = vec![
                 Span::styled("추가 중: ", Style::default().fg(ACCENT)),
-                Span::styled(step_label, Style::default().fg(WARN)),
+                Span::styled(step_label.to_string(), Style::default().fg(WARN)),
                 Span::raw("  "),
             ];
-            let extra = match step {
-                AddStep::SelectKind1 { .. } | AddStep::SelectKind2 { .. } => {
+            let extra = match state.focus {
+                AddFocus::SelectKind1 | AddFocus::SelectKind2 => {
                     hint_line(&[("↑↓", "선택"), ("Enter", "다음"), ("Esc", "취소")])
                 }
-                AddStep::InputValue1 { .. } | AddStep::InputValue2 { .. } => {
-                    hint_line(&[("숫자", "입력"), ("Enter", "다음"), ("Esc", "취소")])
+                AddFocus::InputValue1 | AddFocus::InputValue2 => {
+                    hint_line(&[("숫자", "입력"), ("←→", "커서"), ("Enter", "다음"), ("Esc", "취소")])
                 }
             };
             spans.extend(extra.spans);
@@ -255,14 +267,25 @@ fn render_hint(f: &mut Frame, app: &App, area: Rect) {
             Span::styled("Esc", Style::default().fg(ACCENT)),
             Span::styled(": 취소", Style::default().fg(MUTED)),
         ]),
-        Mode::QuitConfirm => Line::from(vec![
-            Span::styled("s", Style::default().fg(ACCENT)),
-            Span::styled(": 저장 후 종료  ", Style::default().fg(MUTED)),
-            Span::styled("q", Style::default().fg(ACCENT)),
-            Span::styled(": 그냥 종료  ", Style::default().fg(MUTED)),
-            Span::styled("Esc", Style::default().fg(ACCENT)),
-            Span::styled(": 취소", Style::default().fg(MUTED)),
-        ]),
+        Mode::QuitConfirm => {
+            if app.dirty {
+                Line::from(vec![
+                    Span::styled("s", Style::default().fg(ACCENT)),
+                    Span::styled(": 저장 후 종료  ", Style::default().fg(MUTED)),
+                    Span::styled("q", Style::default().fg(ACCENT)),
+                    Span::styled(": 그냥 종료  ", Style::default().fg(MUTED)),
+                    Span::styled("Esc", Style::default().fg(ACCENT)),
+                    Span::styled(": 취소", Style::default().fg(MUTED)),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled("q", Style::default().fg(ACCENT)),
+                    Span::styled(": 종료  ", Style::default().fg(MUTED)),
+                    Span::styled("Esc", Style::default().fg(ACCENT)),
+                    Span::styled(": 취소", Style::default().fg(MUTED)),
+                ])
+            }
+        }
     };
     f.render_widget(Paragraph::new(line), area);
 }
@@ -282,93 +305,110 @@ fn hint_line(pairs: &[(&str, &str)]) -> Line<'static> {
     Line::from(spans)
 }
 
-fn render_adding_overlay(f: &mut Frame, _app: &App, step: &AddStep, area: Rect) {
-    let popup_width = 50u16.min(area.width.saturating_sub(4));
-    let popup_height = 12u16.min(area.height.saturating_sub(4));
+fn render_adding_overlay(f: &mut Frame, state: &AddState, area: Rect) {
+    let show_list = matches!(state.focus, AddFocus::SelectKind1 | AddFocus::SelectKind2);
+    // inner: 2 option rows + blank + "선택:" label + 6 kind rows = 9, or just 2 rows
+    let inner_height: u16 = if show_list { 9 } else { 2 };
+    let popup_height = inner_height + 2;
+    let popup_width = 54u16.min(area.width.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect { x, y, width: popup_width, height: popup_height };
 
     f.render_widget(Clear, popup_area);
 
-    let (title, content_lines) = match step {
-        AddStep::SelectKind1 { cursor } => {
-            let lines = kind_select_lines(*cursor);
-            ("아이템 추가 — 옵션 1 선택", lines)
-        }
-        AddStep::InputValue1 { kind, buffer } => {
-            let lines = value_input_lines(kind, buffer);
-            ("아이템 추가 — 옵션 1 값 입력", lines)
-        }
-        AddStep::SelectKind2 { cursor, .. } => {
-            let lines = kind_select_lines(*cursor);
-            ("아이템 추가 — 옵션 2 선택", lines)
-        }
-        AddStep::InputValue2 { kind2, buffer, .. } => {
-            let lines = value_input_lines(kind2, buffer);
-            ("아이템 추가 — 옵션 2 값 입력", lines)
-        }
-    };
-
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(ACCENT))
         .title(Span::styled(
-            format!(" {title} "),
+            " 아이템 추가 ",
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         ));
 
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
-    let p = Paragraph::new(content_lines).wrap(Wrap { trim: false });
-    f.render_widget(p, inner);
-}
+    let mut lines: Vec<Line<'static>> = Vec::new();
 
-fn kind_select_lines(cursor: usize) -> Vec<Line<'static>> {
-    OptionKind::ALL
-        .iter()
-        .enumerate()
-        .map(|(i, kind)| {
-            if i == cursor {
-                Line::from(vec![
-                    Span::styled(" ▶ ", Style::default().fg(ACCENT)),
+    lines.push(build_add_option_row(state, 1));
+    lines.push(build_add_option_row(state, 2));
+
+    if show_list {
+        lines.push(Line::from(vec![]));
+        let section_label = if matches!(state.focus, AddFocus::SelectKind1) {
+            "옵션 1 선택:"
+        } else {
+            "옵션 2 선택:"
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {section_label}"), Style::default().fg(MUTED)),
+        ]));
+        for (i, kind) in OptionKind::ALL.iter().enumerate() {
+            if i == state.cursor {
+                lines.push(Line::from(vec![
+                    Span::styled("   ▶ ", Style::default().fg(ACCENT)),
                     Span::styled(
                         kind.display_name().to_string(),
                         Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
                     ),
-                ])
+                ]));
             } else {
-                Line::from(vec![
-                    Span::raw("   "),
+                lines.push(Line::from(vec![
+                    Span::raw("     "),
                     Span::raw(kind.display_name().to_string()),
-                ])
+                ]));
             }
-        })
-        .collect()
+        }
+    }
+
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
-fn value_input_lines(kind: &OptionKind, buffer: &str) -> Vec<Line<'static>> {
-    vec![
-        Line::from(vec![
-            Span::raw("옵션: "),
-            Span::styled(
-                kind.display_name().to_string(),
-                Style::default().fg(ACCENT),
-            ),
-        ]),
-        Line::from(vec![]),
-        Line::from(vec![
-            Span::raw("값: "),
-            Span::styled(
-                format!("[{}_]", buffer),
-                Style::default().fg(ACCENT).add_modifier(Modifier::REVERSED),
-            ),
-        ]),
-    ]
+fn build_add_option_row(state: &AddState, opt_num: u8) -> Line<'static> {
+    let is_active = match opt_num {
+        1 => matches!(state.focus, AddFocus::SelectKind1 | AddFocus::InputValue1),
+        2 => matches!(state.focus, AddFocus::SelectKind2 | AddFocus::InputValue2),
+        _ => false,
+    };
+    let is_input = match opt_num {
+        1 => matches!(state.focus, AddFocus::InputValue1),
+        2 => matches!(state.focus, AddFocus::InputValue2),
+        _ => false,
+    };
+
+    let arrow = if is_active {
+        Span::styled(" ▶ ", Style::default().fg(ACCENT))
+    } else {
+        Span::raw("   ")
+    };
+
+    let label = Span::raw(format!("옵션 {opt_num}: "));
+
+    let (kind, buf) = match opt_num {
+        1 => (&state.kind1, state.value1.as_str()),
+        2 => (&state.kind2, state.value2.as_str()),
+        _ => return Line::default(),
+    };
+
+    let kind_span = match kind {
+        Some(k) => Span::styled(k.display_name().to_string(), Style::default().fg(ACCENT)),
+        None => Span::styled("[미선택]", Style::default().fg(MUTED)),
+    };
+
+    let mut spans = vec![arrow, label, kind_span, Span::raw("  ")];
+
+    if is_input {
+        spans.extend(cursor_spans(buf, state.cursor));
+    } else if kind.is_some() && !buf.is_empty() {
+        spans.push(Span::raw(buf.to_string()));
+    } else if kind.is_some() {
+        spans.push(Span::styled("<값>", Style::default().fg(MUTED)));
+    }
+
+    Line::from(spans)
 }
 
-fn render_quit_confirm(f: &mut Frame, area: Rect) {
+fn render_quit_confirm(f: &mut Frame, app: &App, area: Rect) {
     let popup_width = 50u16.min(area.width.saturating_sub(4));
     let popup_height = 5u16;
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -377,27 +417,40 @@ fn render_quit_confirm(f: &mut Frame, area: Rect) {
 
     f.render_widget(Clear, popup_area);
 
+    let (border_color, title) = if app.dirty {
+        (WARN, " 저장 안 된 변경이 있습니다 ")
+    } else {
+        (ACCENT, " 종료 확인 ")
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(WARN))
+        .border_style(Style::default().fg(border_color))
         .title(Span::styled(
-            " 저장 안 된 변경이 있습니다 ",
-            Style::default().fg(WARN).add_modifier(Modifier::BOLD),
+            title,
+            Style::default().fg(border_color).add_modifier(Modifier::BOLD),
         ));
 
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
-    let content = vec![
-        Line::from(vec![
+    let content = if app.dirty {
+        vec![Line::from(vec![
             Span::styled("s", Style::default().fg(ACCENT)),
             Span::raw(": 저장 후 종료  "),
             Span::styled("q", Style::default().fg(ACCENT)),
             Span::raw(": 그냥 종료  "),
             Span::styled("Esc", Style::default().fg(ACCENT)),
             Span::raw(": 취소"),
-        ]),
-    ];
+        ])]
+    } else {
+        vec![Line::from(vec![
+            Span::styled("q", Style::default().fg(ACCENT)),
+            Span::raw(": 종료  "),
+            Span::styled("Esc", Style::default().fg(ACCENT)),
+            Span::raw(": 취소"),
+        ])]
+    };
     f.render_widget(Paragraph::new(content).alignment(Alignment::Center), inner);
 }
 

@@ -1,20 +1,43 @@
 use crate::item::{Item, ItemOption, OptionKind};
 use std::time::Instant;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AddFocus {
+    SelectKind1,
+    InputValue1,
+    SelectKind2,
+    InputValue2,
+}
+
 #[derive(Debug, Clone)]
-pub enum AddStep {
-    SelectKind1 { cursor: usize },
-    InputValue1 { kind: OptionKind, buffer: String },
-    SelectKind2 { kind1: OptionKind, value1: i32, cursor: usize },
-    InputValue2 { kind1: OptionKind, value1: i32, kind2: OptionKind, buffer: String },
+pub struct AddState {
+    pub kind1: Option<OptionKind>,
+    pub value1: String,
+    pub kind2: Option<OptionKind>,
+    pub value2: String,
+    pub focus: AddFocus,
+    pub cursor: usize,
+}
+
+impl AddState {
+    pub fn new() -> Self {
+        Self {
+            kind1: None,
+            value1: String::new(),
+            kind2: None,
+            value2: String::new(),
+            focus: AddFocus::SelectKind1,
+            cursor: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub enum Mode {
     List,
     Edit { item_idx: usize, option_idx: usize },
-    EditValue { item_idx: usize, option_idx: usize, buffer: String },
-    Adding(AddStep),
+    EditValue { item_idx: usize, option_idx: usize, buffer: String, cursor: usize },
+    Adding(AddState),
     ConfirmDelete { item_idx: usize },
     QuitConfirm,
 }
@@ -107,10 +130,10 @@ impl App {
                     Mode::Edit { item_idx, option_idx } => {
                         self.handle_edit(action, item_idx, option_idx)
                     }
-                    Mode::EditValue { item_idx, option_idx, buffer } => {
-                        self.handle_edit_value(action, item_idx, option_idx, buffer)
+                    Mode::EditValue { item_idx, option_idx, buffer, cursor } => {
+                        self.handle_edit_value(action, item_idx, option_idx, buffer, cursor)
                     }
-                    Mode::Adding(step) => self.handle_adding(action, step),
+                    Mode::Adding(state) => self.handle_adding(action, state),
                     Mode::ConfirmDelete { item_idx } => {
                         self.handle_confirm_delete(action, item_idx)
                     }
@@ -121,11 +144,7 @@ impl App {
     }
 
     fn handle_quit(&mut self) {
-        if self.dirty {
-            self.mode = Mode::QuitConfirm;
-        } else {
-            self.should_quit = true;
-        }
+        self.mode = Mode::QuitConfirm;
     }
 
     fn do_save(&mut self) {
@@ -172,7 +191,7 @@ impl App {
                 self.mode = Mode::Edit { item_idx: self.selected, option_idx: 0 };
             }
             Action::AddItem => {
-                self.mode = Mode::Adding(AddStep::SelectKind1 { cursor: 0 });
+                self.mode = Mode::Adding(AddState::new());
             }
             Action::Delete if !self.items.is_empty() => {
                 self.mode = Mode::ConfirmDelete { item_idx: self.selected };
@@ -191,7 +210,8 @@ impl App {
             }
             Action::Enter => {
                 let buf = self.items[item_idx].options[option_idx].value.to_string();
-                self.mode = Mode::EditValue { item_idx, option_idx, buffer: buf };
+                let cursor = buf.len();
+                self.mode = Mode::EditValue { item_idx, option_idx, buffer: buf, cursor };
             }
             Action::Escape => {
                 self.selected = item_idx;
@@ -221,17 +241,30 @@ impl App {
         item_idx: usize,
         option_idx: usize,
         mut buffer: String,
+        mut cursor: usize,
     ) {
         match action {
+            Action::Left => {
+                cursor = cursor.saturating_sub(1);
+                self.mode = Mode::EditValue { item_idx, option_idx, buffer, cursor };
+            }
+            Action::Right => {
+                cursor = (cursor + 1).min(buffer.len());
+                self.mode = Mode::EditValue { item_idx, option_idx, buffer, cursor };
+            }
             Action::InputChar(c) => {
-                if (c == '-' && buffer.is_empty()) || c.is_ascii_digit() {
-                    buffer.push(c);
+                if (c == '-' && cursor == 0 && !buffer.starts_with('-')) || c.is_ascii_digit() {
+                    buffer.insert(cursor, c);
+                    cursor += 1;
                 }
-                self.mode = Mode::EditValue { item_idx, option_idx, buffer };
+                self.mode = Mode::EditValue { item_idx, option_idx, buffer, cursor };
             }
             Action::Backspace => {
-                buffer.pop();
-                self.mode = Mode::EditValue { item_idx, option_idx, buffer };
+                if cursor > 0 {
+                    buffer.remove(cursor - 1);
+                    cursor -= 1;
+                }
+                self.mode = Mode::EditValue { item_idx, option_idx, buffer, cursor };
             }
             Action::Enter => {
                 if let Ok(val) = buffer.parse::<i32>() {
@@ -248,88 +281,115 @@ impl App {
         }
     }
 
-    fn handle_adding(&mut self, action: Action, step: AddStep) {
-        match step {
-            AddStep::SelectKind1 { cursor } => match action {
+    fn handle_adding(&mut self, action: Action, mut state: AddState) {
+        match state.focus {
+            AddFocus::SelectKind1 => match action {
                 Action::Up => {
-                    let c = if cursor == 0 { 0 } else { cursor - 1 };
-                    self.mode = Mode::Adding(AddStep::SelectKind1 { cursor: c });
+                    state.cursor = state.cursor.saturating_sub(1);
+                    self.mode = Mode::Adding(state);
                 }
                 Action::Down => {
-                    let c = (cursor + 1).min(OptionKind::ALL.len() - 1);
-                    self.mode = Mode::Adding(AddStep::SelectKind1 { cursor: c });
+                    state.cursor = (state.cursor + 1).min(OptionKind::ALL.len() - 1);
+                    self.mode = Mode::Adding(state);
                 }
                 Action::Enter => {
-                    let kind = OptionKind::ALL[cursor];
-                    self.mode =
-                        Mode::Adding(AddStep::InputValue1 { kind, buffer: String::new() });
+                    state.kind1 = Some(OptionKind::ALL[state.cursor]);
+                    state.focus = AddFocus::InputValue1;
+                    state.cursor = 0;
+                    self.mode = Mode::Adding(state);
                 }
                 Action::Escape => {
                     self.mode = Mode::List;
                 }
                 _ => {}
             },
-            AddStep::InputValue1 { kind, mut buffer } => match action {
+            AddFocus::InputValue1 => match action {
+                Action::Left => {
+                    state.cursor = state.cursor.saturating_sub(1);
+                    self.mode = Mode::Adding(state);
+                }
+                Action::Right => {
+                    state.cursor = (state.cursor + 1).min(state.value1.len());
+                    self.mode = Mode::Adding(state);
+                }
                 Action::InputChar(c) => {
-                    if (c == '-' && buffer.is_empty()) || c.is_ascii_digit() {
-                        buffer.push(c);
+                    if (c == '-' && state.cursor == 0 && !state.value1.starts_with('-'))
+                        || c.is_ascii_digit()
+                    {
+                        state.value1.insert(state.cursor, c);
+                        state.cursor += 1;
                     }
-                    self.mode = Mode::Adding(AddStep::InputValue1 { kind, buffer });
+                    self.mode = Mode::Adding(state);
                 }
                 Action::Backspace => {
-                    buffer.pop();
-                    self.mode = Mode::Adding(AddStep::InputValue1 { kind, buffer });
-                }
-                Action::Enter => {
-                    if let Ok(value1) = buffer.parse::<i32>() {
-                        self.mode = Mode::Adding(AddStep::SelectKind2 {
-                            kind1: kind,
-                            value1,
-                            cursor: 0,
-                        });
+                    if state.cursor > 0 {
+                        state.value1.remove(state.cursor - 1);
+                        state.cursor -= 1;
                     }
+                    self.mode = Mode::Adding(state);
+                }
+                Action::Enter if state.value1.parse::<i32>().is_ok() => {
+                    state.focus = AddFocus::SelectKind2;
+                    state.cursor = 0;
+                    self.mode = Mode::Adding(state);
                 }
                 Action::Escape => {
                     self.mode = Mode::List;
                 }
                 _ => {}
             },
-            AddStep::SelectKind2 { kind1, value1, cursor } => match action {
+            AddFocus::SelectKind2 => match action {
                 Action::Up => {
-                    let c = if cursor == 0 { 0 } else { cursor - 1 };
-                    self.mode = Mode::Adding(AddStep::SelectKind2 { kind1, value1, cursor: c });
+                    state.cursor = state.cursor.saturating_sub(1);
+                    self.mode = Mode::Adding(state);
                 }
                 Action::Down => {
-                    let c = (cursor + 1).min(OptionKind::ALL.len() - 1);
-                    self.mode = Mode::Adding(AddStep::SelectKind2 { kind1, value1, cursor: c });
+                    state.cursor = (state.cursor + 1).min(OptionKind::ALL.len() - 1);
+                    self.mode = Mode::Adding(state);
                 }
                 Action::Enter => {
-                    let kind2 = OptionKind::ALL[cursor];
-                    self.mode = Mode::Adding(AddStep::InputValue2 {
-                        kind1,
-                        value1,
-                        kind2,
-                        buffer: String::new(),
-                    });
+                    state.kind2 = Some(OptionKind::ALL[state.cursor]);
+                    state.focus = AddFocus::InputValue2;
+                    state.cursor = 0;
+                    self.mode = Mode::Adding(state);
                 }
                 Action::Escape => {
                     self.mode = Mode::List;
                 }
                 _ => {}
             },
-            AddStep::InputValue2 { kind1, value1, kind2, mut buffer } => match action {
+            AddFocus::InputValue2 => match action {
+                Action::Left => {
+                    state.cursor = state.cursor.saturating_sub(1);
+                    self.mode = Mode::Adding(state);
+                }
+                Action::Right => {
+                    state.cursor = (state.cursor + 1).min(state.value2.len());
+                    self.mode = Mode::Adding(state);
+                }
                 Action::InputChar(c) => {
-                    if (c == '-' && buffer.is_empty()) || c.is_ascii_digit() {
-                        buffer.push(c);
+                    if (c == '-' && state.cursor == 0 && !state.value2.starts_with('-'))
+                        || c.is_ascii_digit()
+                    {
+                        state.value2.insert(state.cursor, c);
+                        state.cursor += 1;
                     }
-                    self.mode = Mode::Adding(AddStep::InputValue2 { kind1, value1, kind2, buffer });
+                    self.mode = Mode::Adding(state);
                 }
                 Action::Backspace => {
-                    buffer.pop();
-                    self.mode = Mode::Adding(AddStep::InputValue2 { kind1, value1, kind2, buffer });
+                    if state.cursor > 0 {
+                        state.value2.remove(state.cursor - 1);
+                        state.cursor -= 1;
+                    }
+                    self.mode = Mode::Adding(state);
                 }
                 Action::Enter => {
-                    if let Ok(value2) = buffer.parse::<i32>() {
+                    if let (Some(kind1), Ok(value1), Some(kind2), Ok(value2)) = (
+                        state.kind1,
+                        state.value1.parse::<i32>(),
+                        state.kind2,
+                        state.value2.parse::<i32>(),
+                    ) {
                         self.push_undo();
                         self.items.push(Item {
                             options: [
@@ -425,7 +485,7 @@ mod tests {
         let mut app = make_app();
         app.apply(Action::Enter);
         app.apply(Action::Enter);
-        // clear existing buffer ("10") then type "99"
+        // buffer is pre-filled with "10", cursor=2; clear it first
         app.apply(Action::Backspace);
         app.apply(Action::Backspace);
         app.apply(Action::InputChar('9'));
@@ -446,6 +506,17 @@ mod tests {
         app.apply(Action::Escape);
         assert_eq!(app.items[0].options[0].value, original);
         assert_eq!(app.dirty, original_dirty);
+    }
+
+    #[test]
+    fn edit_value_cursor_movement() {
+        let mut app = make_app();
+        app.apply(Action::Enter);
+        app.apply(Action::Enter); // buffer="10", cursor=2
+        app.apply(Action::Left);  // cursor=1
+        app.apply(Action::InputChar('5')); // buffer="150", cursor=2
+        app.apply(Action::Enter);
+        assert_eq!(app.items[0].options[0].value, 150);
     }
 
     #[test]
@@ -513,5 +584,12 @@ mod tests {
         assert_eq!(app.items.len(), 1);
         app.apply(Action::Undo);
         assert_eq!(app.items.len(), 2);
+    }
+
+    #[test]
+    fn quit_always_goes_to_confirm() {
+        let mut app = make_app();
+        app.apply(Action::Quit);
+        assert!(matches!(app.mode, Mode::QuitConfirm));
     }
 }
