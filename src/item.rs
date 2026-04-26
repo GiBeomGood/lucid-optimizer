@@ -17,10 +17,10 @@ impl OptionKind {
     pub const ALL: [OptionKind; 6] = [
         OptionKind::Magic,
         OptionKind::MagicPercent,
-        OptionKind::Mastery,
         OptionKind::CritRate,
         OptionKind::CritDamage,
         OptionKind::CooldownReduction,
+        OptionKind::Mastery,
     ];
 
     pub fn display_name(self) -> &'static str {

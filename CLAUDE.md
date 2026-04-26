@@ -36,7 +36,3 @@ cargo clippy
 
 - `ratatui` + `crossterm`: TUI 렌더링 및 키 입력 이벤트 처리. crossterm은 ratatui 백엔드로 쓰이지만, 키 이벤트를 직접 처리할 때 명시적으로 import 필요.
 - `serde` + `serde_json`: JSON 직렬화/역직렬화. 구조체에 `#[derive(Serialize, Deserialize)]` 붙이면 자동 처리됨.
-
-## 폰트
-
-한글 표시를 위해 D2Coding 폰트 사용. `assets/D2CodingLigature.ttc` 위치.
