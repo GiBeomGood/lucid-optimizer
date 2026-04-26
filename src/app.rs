@@ -52,6 +52,7 @@ pub enum Mode {
     Stats { cursor: usize },
     EditStatValue { field_idx: usize, buffer: String, cursor: usize },
     Edit { item_idx: usize, option_idx: usize },
+    EditKind { item_idx: usize, option_idx: usize, kind_cursor: usize },
     EditValue { item_idx: usize, option_idx: usize, buffer: String, cursor: usize },
     Adding(AddState),
     ConfirmDelete { item_idx: usize },
@@ -71,6 +72,8 @@ pub enum Action {
     Save,
     Delete,
     AddItem,
+    EditKind,
+    EditValue,
     Undo,
     Redo,
     Quit,
@@ -168,6 +171,9 @@ impl App {
                     }
                     Mode::Edit { item_idx, option_idx } => {
                         self.handle_edit(action, item_idx, option_idx)
+                    }
+                    Mode::EditKind { item_idx, option_idx, kind_cursor } => {
+                        self.handle_edit_kind(action, item_idx, option_idx, kind_cursor)
                     }
                     Mode::EditValue { item_idx, option_idx, buffer, cursor } => {
                         self.handle_edit_value(action, item_idx, option_idx, buffer, cursor)
@@ -349,13 +355,20 @@ impl App {
 
     fn handle_edit(&mut self, action: Action, item_idx: usize, option_idx: usize) {
         match action {
-            Action::Left => {
-                self.mode = Mode::Edit { item_idx, option_idx: 0 };
+            Action::Up => {
+                self.mode = Mode::Edit { item_idx, option_idx: option_idx.saturating_sub(1) };
             }
-            Action::Right => {
-                self.mode = Mode::Edit { item_idx, option_idx: 1 };
+            Action::Down => {
+                self.mode = Mode::Edit { item_idx, option_idx: (option_idx + 1).min(1) };
             }
-            Action::Enter => {
+            Action::EditKind => {
+                let kind_cursor = OptionKind::ALL
+                    .iter()
+                    .position(|&k| k == self.items[item_idx].options[option_idx].kind)
+                    .unwrap_or(0);
+                self.mode = Mode::EditKind { item_idx, option_idx, kind_cursor };
+            }
+            Action::Enter | Action::EditValue => {
                 let buf = self.items[item_idx].options[option_idx].value.to_string();
                 let cursor = buf.len();
                 self.mode = Mode::EditValue { item_idx, option_idx, buffer: buf, cursor };
@@ -364,19 +377,37 @@ impl App {
                 self.selected = item_idx;
                 self.mode = Mode::List;
             }
+            _ => {}
+        }
+    }
+
+    fn handle_edit_kind(
+        &mut self,
+        action: Action,
+        item_idx: usize,
+        option_idx: usize,
+        mut kind_cursor: usize,
+    ) {
+        match action {
             Action::Up => {
-                self.selected = item_idx;
-                if self.selected > 0 {
-                    self.selected -= 1;
-                }
-                self.mode = Mode::List;
+                kind_cursor = kind_cursor.saturating_sub(1);
+                self.mode = Mode::EditKind { item_idx, option_idx, kind_cursor };
             }
             Action::Down => {
-                self.selected = item_idx;
-                if self.selected + 1 < self.items.len() {
-                    self.selected += 1;
+                kind_cursor = (kind_cursor + 1).min(OptionKind::ALL.len() - 1);
+                self.mode = Mode::EditKind { item_idx, option_idx, kind_cursor };
+            }
+            Action::Enter => {
+                let new_kind = OptionKind::ALL[kind_cursor];
+                if new_kind != self.items[item_idx].options[option_idx].kind {
+                    self.push_undo();
+                    self.items[item_idx].options[option_idx].kind = new_kind;
+                    self.dirty = true;
                 }
-                self.mode = Mode::List;
+                self.mode = Mode::Edit { item_idx, option_idx };
+            }
+            Action::Escape => {
+                self.mode = Mode::Edit { item_idx, option_idx };
             }
             _ => {}
         }
@@ -641,8 +672,8 @@ mod tests {
     #[test]
     fn edit_value_enter_applies_change() {
         let mut app = make_app();
-        app.apply(Action::Enter);
-        app.apply(Action::Enter);
+        app.apply(Action::Enter);      // List → Edit
+        app.apply(Action::EditValue);  // Edit → EditValue, buffer="10"
         // buffer is pre-filled with "10", cursor=2; clear it first
         app.apply(Action::Backspace);
         app.apply(Action::Backspace);
@@ -658,8 +689,8 @@ mod tests {
         let mut app = make_app();
         let original = app.items[0].options[0].value;
         let original_dirty = app.dirty;
-        app.apply(Action::Enter);
-        app.apply(Action::Enter);
+        app.apply(Action::Enter);      // List → Edit
+        app.apply(Action::EditValue);  // → EditValue
         app.apply(Action::InputChar('9'));
         app.apply(Action::Escape);
         assert_eq!(app.items[0].options[0].value, original);
@@ -669,9 +700,9 @@ mod tests {
     #[test]
     fn edit_value_cursor_movement() {
         let mut app = make_app();
-        app.apply(Action::Enter);
-        app.apply(Action::Enter); // buffer="10", cursor=2
-        app.apply(Action::Left);  // cursor=1
+        app.apply(Action::Enter);      // List → Edit
+        app.apply(Action::EditValue);  // → EditValue, buffer="10", cursor=2
+        app.apply(Action::Left);       // cursor=1
         app.apply(Action::InputChar('5')); // buffer="150", cursor=2
         app.apply(Action::Enter);
         assert_eq!(app.items[0].options[0].value, 150);

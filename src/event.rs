@@ -9,6 +9,7 @@ pub fn key_to_action(app: &App, key: KeyEvent) -> Option<Action> {
         Mode::Stats { .. } => stats_action(key),
         Mode::EditStatValue { .. } => value_input_action(key),
         Mode::Edit { .. } => edit_action(key),
+        Mode::EditKind { .. } => edit_kind_action(key),
         Mode::EditValue { .. } => value_input_action(key),
         Mode::Adding(state) => adding_action(key, state),
         Mode::ConfirmDelete { .. } => confirm_delete_action(key),
@@ -56,12 +57,21 @@ fn list_action(key: KeyEvent) -> Option<Action> {
 
 fn edit_action(key: KeyEvent) -> Option<Action> {
     match key.code {
-        KeyCode::Left | KeyCode::Char('h') => Some(Action::Left),
-        KeyCode::Right | KeyCode::Char('l') => Some(Action::Right),
-        KeyCode::Enter => Some(Action::Enter),
-        KeyCode::Esc => Some(Action::Escape),
         KeyCode::Up | KeyCode::Char('k') => Some(Action::Up),
         KeyCode::Down | KeyCode::Char('j') => Some(Action::Down),
+        KeyCode::Char('o') => Some(Action::EditKind),
+        KeyCode::Char('v') | KeyCode::Enter => Some(Action::EditValue),
+        KeyCode::Esc => Some(Action::Escape),
+        _ => None,
+    }
+}
+
+fn edit_kind_action(key: KeyEvent) -> Option<Action> {
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => Some(Action::Up),
+        KeyCode::Down | KeyCode::Char('j') => Some(Action::Down),
+        KeyCode::Enter => Some(Action::Enter),
+        KeyCode::Esc => Some(Action::Escape),
         _ => None,
     }
 }

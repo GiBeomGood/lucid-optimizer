@@ -60,6 +60,9 @@ pub fn render(f: &mut Frame, app: &App) {
     if let Mode::Adding(state) = &app.mode {
         render_adding_overlay(f, state, area);
     }
+    if let Mode::EditKind { option_idx, kind_cursor, .. } = &app.mode {
+        render_edit_kind_overlay(f, *option_idx, *kind_cursor, area);
+    }
 }
 
 fn render_main(f: &mut Frame, app: &App, area: Rect) {
@@ -189,19 +192,27 @@ fn build_option_spans<'a>(
 
     match &app.mode {
         Mode::Edit { item_idx: i, option_idx: o } if *i == item_idx => {
-            let label_style = if *o == opt_idx {
-                Style::default().fg(ACCENT)
+            let is_focused_row = *o == opt_idx;
+            let style = if is_focused_row {
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(ACCENT_DIM)
             };
-            let val_style = if *o == opt_idx {
-                Style::default().fg(ACCENT).add_modifier(Modifier::UNDERLINED)
+            vec![
+                Span::styled(label, style),
+                Span::styled(opt.value.to_string(), style),
+            ]
+        }
+        Mode::EditKind { item_idx: i, option_idx: o, .. } if *i == item_idx => {
+            let is_focused_row = *o == opt_idx;
+            let style = if is_focused_row {
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
             } else {
-                Style::default()
+                Style::default().fg(ACCENT_DIM)
             };
             vec![
-                Span::styled(label, label_style),
-                Span::styled(opt.value.to_string(), val_style),
+                Span::styled(label, style),
+                Span::styled(opt.value.to_string(), style),
             ]
         }
         Mode::EditValue { item_idx: i, option_idx: o, buffer, cursor } if *i == item_idx => {
@@ -268,10 +279,15 @@ fn render_hint(f: &mut Frame, app: &App, area: Rect) {
             ("q", "종료"),
         ]),
         Mode::Edit { .. } => hint_line(&[
-            ("←→", "옵션 이동"),
-            ("Enter", "값 편집"),
-            ("↑↓", "복귀+이동"),
+            ("↑↓", "행 이동"),
+            ("o", "옵션 변경"),
+            ("v / Enter", "값 편집"),
             ("Esc", "복귀"),
+        ]),
+        Mode::EditKind { .. } => hint_line(&[
+            ("↑↓", "선택"),
+            ("Enter", "확정"),
+            ("Esc", "뒤로"),
         ]),
         Mode::EditValue { .. } => hint_line(&[
             ("숫자/-", "입력"),
@@ -635,6 +651,42 @@ fn render_quit_confirm(f: &mut Frame, app: &App, area: Rect) {
         ])]
     };
     f.render_widget(Paragraph::new(content).alignment(Alignment::Center), inner);
+}
+
+fn render_edit_kind_overlay(f: &mut Frame, option_idx: usize, kind_cursor: usize, area: Rect) {
+    let popup_height = (OptionKind::ALL.len() as u16) + 4;
+    let popup_width = 32u16.min(area.width.saturating_sub(4));
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect { x, y, width: popup_width, height: popup_height };
+
+    f.render_widget(Clear, popup_area);
+
+    let title = if option_idx == 0 { " 옵션 1 변경 " } else { " 옵션 2 변경 " };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Span::styled(title, Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)));
+
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    for (i, kind) in OptionKind::ALL.iter().enumerate() {
+        if i == kind_cursor {
+            lines.push(Line::from(vec![
+                Span::styled(" ▶ ", Style::default().fg(ACCENT)),
+                Span::styled(kind.display_name().to_string(), Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+            ]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::raw("   "),
+                Span::raw(kind.display_name().to_string()),
+            ]));
+        }
+    }
+
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 fn compute_offset(selected: usize, current_offset: usize, visible: usize) -> usize {
