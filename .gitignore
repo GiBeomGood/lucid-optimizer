@@ -4,3 +4,5 @@ items.json
 stats.json
 **/*fuck*
 **/*.local.json
+**/*temp*
+.release_temp_notes.md

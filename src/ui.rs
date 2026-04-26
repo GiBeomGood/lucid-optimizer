@@ -80,7 +80,7 @@ fn render_main(f: &mut Frame, app: &mut App, area: Rect) {
 
     let title_line = Line::from(vec![
         Span::styled(
-            format!(" 아이템 목록(총 {:>2}개)", app.items.len()),
+            format!(" 몽환의 결정 목록(총 {:>2}개)", app.items.len()),
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         ),
         Span::raw("  "),
@@ -96,7 +96,7 @@ fn render_main(f: &mut Frame, app: &mut App, area: Rect) {
 
     if app.items.is_empty() {
         let empty_line = Line::from(vec![
-            Span::raw("아이템이 없습니다. "),
+            Span::raw("몽환의 결정이 없습니다. "),
             Span::styled("a", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
             Span::raw("를 눌러 추가하세요."),
         ]);
@@ -303,9 +303,9 @@ fn render_hint(f: &mut Frame, app: &App, area: Rect) {
                     Span::styled("추가 중  ", Style::default().fg(ACCENT)),
                 ];
                 let extra = if state.both_complete() {
-                    hint_line(&[("↑↓", "이동"), ("o", "옵션"), ("v", "값 편집"), ("w", "추가 확정"), ("Esc", "취소")])
+                    hint_line(&[("↑↓", "이동"), ("o", "옵션 편집"), ("v", "값 편집"), ("w", "추가 확정"), ("Esc", "취소")])
                 } else {
-                    hint_line(&[("↑↓", "이동"), ("o", "옵션"), ("v", "값 편집"), ("Esc", "취소")])
+                    hint_line(&[("↑↓", "이동"), ("o", "옵션 편집"), ("v", "값 편집"), ("Esc", "취소")])
                 };
                 spans.extend(extra.spans);
                 Line::from(spans)
@@ -382,7 +382,7 @@ fn render_adding_overlay(f: &mut Frame, state: &AddState, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(ACCENT))
         .title(Span::styled(
-            " 아이템 추가 ",
+            " 몽환의 결정 추가 ",
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         ));
 
@@ -498,7 +498,7 @@ fn render_home(f: &mut Frame, app: &App, area: Rect, cursor: usize) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let menu_items = ["기본 정보 보기", "아이템 목록 보기"];
+    let menu_items = ["기본 정보 보기", "몽환의 결정 목록 보기"];
     let total_height = menu_items.len() as u16;
     let start_y = inner.y + inner.height.saturating_sub(total_height) / 2;
 
@@ -651,7 +651,13 @@ fn render_quit_confirm(f: &mut Frame, app: &App, area: Rect) {
             Span::raw(": 취소"),
         ])]
     };
-    f.render_widget(Paragraph::new(content).alignment(Alignment::Center), inner);
+    let text_area = Rect {
+        x: inner.x,
+        y: inner.y + inner.height / 2,
+        width: inner.width,
+        height: 1,
+    };
+    f.render_widget(Paragraph::new(content).alignment(Alignment::Center), text_area);
 }
 
 fn render_edit_kind_overlay(f: &mut Frame, option_idx: usize, kind_cursor: usize, area: Rect) {
