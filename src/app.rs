@@ -28,7 +28,7 @@ impl AddState {
             value1: String::new(),
             kind2: None,
             value2: String::new(),
-            focus: AddFocus::SelectRow,
+            focus: AddFocus::SelectKind(0),
             row_cursor: 0,
             kind_cursor: 0,
             val_cursor: 0,
@@ -90,6 +90,7 @@ pub struct App {
     pub should_quit: bool,
     pub file_path: String,
     pub stats_path: String,
+    prev_mode: Option<Mode>,
     undo_stack: Vec<Vec<Item>>,
     redo_stack: Vec<Vec<Item>>,
 }
@@ -108,6 +109,7 @@ impl App {
             should_quit: false,
             file_path,
             stats_path,
+            prev_mode: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
         }
@@ -181,6 +183,7 @@ impl App {
     }
 
     fn handle_quit(&mut self) {
+        self.prev_mode = Some(self.mode.clone());
         self.mode = Mode::QuitConfirm;
     }
 
@@ -337,6 +340,9 @@ impl App {
             Action::Delete if !self.items.is_empty() => {
                 self.mode = Mode::ConfirmDelete { item_idx: self.selected };
             }
+            Action::Escape => {
+                self.mode = Mode::Home { cursor: 1 };
+            }
             _ => {}
         }
     }
@@ -409,9 +415,11 @@ impl App {
             }
             Action::Enter => {
                 if let Ok(val) = buffer.parse::<i32>() {
-                    self.push_undo();
-                    self.items[item_idx].options[option_idx].value = val;
-                    self.dirty = true;
+                    if val != self.items[item_idx].options[option_idx].value {
+                        self.push_undo();
+                        self.items[item_idx].options[option_idx].value = val;
+                        self.dirty = true;
+                    }
                 }
                 self.mode = Mode::Edit { item_idx, option_idx };
             }
@@ -531,7 +539,15 @@ impl App {
                         !state.value2.is_empty() && state.value2.parse::<i32>().is_ok()
                     };
                     if valid {
-                        state.focus = AddFocus::SelectRow;
+                        if row == 0 {
+                            let kind_idx = state.kind2.and_then(|k| OptionKind::ALL.iter().position(|&x| x == k)).unwrap_or(0);
+                            state.kind_cursor = kind_idx;
+                            state.row_cursor = 1;
+                            state.focus = AddFocus::SelectKind(1);
+                        } else {
+                            state.row_cursor = 0;
+                            state.focus = AddFocus::SelectRow;
+                        }
                         self.mode = Mode::Adding(state);
                     }
                 }
@@ -575,7 +591,7 @@ impl App {
                 self.should_quit = true;
             }
             Action::Escape => {
-                self.mode = Mode::List;
+                self.mode = self.prev_mode.take().unwrap_or(Mode::List);
             }
             _ => {}
         }
@@ -684,24 +700,23 @@ mod tests {
     fn adding_full_flow_appends_item() {
         let mut app = make_app();
         let before = app.items.len();
+        // AddItem → SelectKind(0) (목록 바로 열림)
         app.apply(Action::AddItem);
-        // SelectRow, row_cursor=0 → Enter → SelectKind(0)
-        app.apply(Action::Enter);
+        assert!(matches!(app.mode, Mode::Adding(ref s) if matches!(s.focus, AddFocus::SelectKind(0))));
         // SelectKind(0): cursor=0 (Magic) → Enter → InputValue(0)
         app.apply(Action::Enter);
-        // InputValue(0): type "5" → Enter → SelectRow
+        // InputValue(0): type "5" → Enter → SelectKind(1) (목록 열림)
         app.apply(Action::InputChar('5'));
         app.apply(Action::Enter);
-        // SelectRow, row_cursor=0 → Down → row_cursor=1 → Enter → SelectKind(1)
-        app.apply(Action::Down);
-        app.apply(Action::Enter);
+        assert!(matches!(app.mode, Mode::Adding(ref s) if matches!(s.focus, AddFocus::SelectKind(1))));
         // SelectKind(1): Down → cursor=1 (MagicPercent) → Enter → InputValue(1)
         app.apply(Action::Down);
         app.apply(Action::Enter);
-        // InputValue(1): type "3" → Enter → SelectRow
+        // InputValue(1): type "3" → Enter → SelectRow (목록 닫힘, both_complete)
         app.apply(Action::InputChar('3'));
         app.apply(Action::Enter);
-        // SelectRow, both complete → Enter → List + item added
+        assert!(matches!(app.mode, Mode::Adding(ref s) if matches!(s.focus, AddFocus::SelectRow)));
+        // SelectRow + both_complete → Enter → List + item added
         app.apply(Action::Enter);
         assert_eq!(app.items.len(), before + 1);
         assert!(app.dirty);
@@ -717,7 +732,8 @@ mod tests {
     fn adding_escape_cancels_without_change() {
         let mut app = make_app();
         let before = app.items.clone();
-        app.apply(Action::AddItem); // SelectRow
+        app.apply(Action::AddItem); // SelectKind(0)
+        app.apply(Action::Escape); // → SelectRow
         app.apply(Action::Escape); // → List
         assert_eq!(app.items, before);
         assert!(matches!(app.mode, Mode::List));
@@ -726,8 +742,7 @@ mod tests {
     #[test]
     fn adding_esc_navigates_back() {
         let mut app = make_app();
-        app.apply(Action::AddItem);            // SelectRow
-        app.apply(Action::Enter);              // SelectKind(0)
+        app.apply(Action::AddItem);            // SelectKind(0) (목록 바로 열림)
         assert!(matches!(app.mode, Mode::Adding(ref s) if matches!(s.focus, AddFocus::SelectKind(0))));
         app.apply(Action::Enter);              // InputValue(0)
         assert!(matches!(app.mode, Mode::Adding(ref s) if matches!(s.focus, AddFocus::InputValue(0))));

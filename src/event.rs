@@ -49,6 +49,7 @@ fn list_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('q') => Some(Action::Quit),
         KeyCode::Char('u') => Some(Action::Undo),
         KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(Action::Redo),
+        KeyCode::Esc => Some(Action::Escape),
         _ => None,
     }
 }

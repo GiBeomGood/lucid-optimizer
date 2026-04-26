@@ -41,6 +41,12 @@ pub fn render(f: &mut Frame, app: &App) {
         ])
         .split(area);
 
+    if matches!(&app.mode, Mode::QuitConfirm) {
+        render_quit_confirm(f, app, area);
+        render_hint(f, app, chunks[1]);
+        return;
+    }
+
     match &app.mode {
         Mode::Home { cursor } => render_home(f, app, chunks[0], *cursor),
         Mode::Stats { cursor } => render_stats(f, app, chunks[0], *cursor),
@@ -51,10 +57,8 @@ pub fn render(f: &mut Frame, app: &App) {
     }
     render_hint(f, app, chunks[1]);
 
-    match &app.mode {
-        Mode::Adding(state) => render_adding_overlay(f, state, area),
-        Mode::QuitConfirm => render_quit_confirm(f, app, area),
-        _ => {}
+    if let Mode::Adding(state) = &app.mode {
+        render_adding_overlay(f, state, area);
     }
 }
 
@@ -73,7 +77,7 @@ fn render_main(f: &mut Frame, app: &App, area: Rect) {
 
     let title_line = Line::from(vec![
         Span::styled(
-            format!(" Items ({})", app.items.len()),
+            format!(" 아이템 목록(총 {:>2}개)", app.items.len()),
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         ),
         Span::raw("  "),
@@ -134,16 +138,16 @@ fn render_main(f: &mut Frame, app: &App, area: Rect) {
 
         let num_span = if is_confirm_delete {
             Span::styled(
-                format!("{}. ", item_idx + 1),
+                format!("{:2}. ", item_idx + 1),
                 Style::default().fg(DANGER),
             )
         } else if is_selected {
             Span::styled(
-                format!("{}. ", item_idx + 1),
+                format!("{:2}. ", item_idx + 1),
                 Style::default().fg(ACCENT),
             )
         } else {
-            Span::raw(format!("{}. ", item_idx + 1))
+            Span::raw(format!("{:2}. ", item_idx + 1))
         };
 
         // Option 0 row
@@ -164,7 +168,7 @@ fn render_main(f: &mut Frame, app: &App, area: Rect) {
 
         // Option 1 row
         let opt1_spans = build_option_spans(app, item_idx, 1, &item.options[1]);
-        let indent = Span::raw("      ");
+        let indent = Span::raw("       ");
         let mut line1_spans = vec![indent];
         line1_spans.extend(opt1_spans);
         let line1 = Line::from(line1_spans);
@@ -577,6 +581,17 @@ fn render_stats_inner(
 }
 
 fn render_quit_confirm(f: &mut Frame, app: &App, area: Rect) {
+    f.render_widget(Clear, area);
+
+    let outer_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT_DIM))
+        .title(Span::styled(
+            " Lucid Optimizer ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ));
+    f.render_widget(outer_block, area);
+
     let popup_width = 50u16.min(area.width.saturating_sub(4));
     let popup_height = 5u16;
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
