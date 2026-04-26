@@ -6,8 +6,18 @@ on:
       - "v*"
 
 jobs:
-  build-and-draft:
-    runs-on: windows-latest
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: lucid-optimizer.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: lucid-optimizer-mac
+
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
 
@@ -17,14 +27,18 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: ${{ matrix.target }}
 
       - name: Build release binary
-        run: cargo build --release --target x86_64-pc-windows-msvc
+        run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Create draft release
+      - name: Rename binary (macOS)
+        if: matrix.os == 'macos-latest'
+        run: mv target/${{ matrix.target }}/release/lucid-optimizer target/${{ matrix.target }}/release/lucid-optimizer-mac
+
+      - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
           name: ${{ github.ref_name }}
-          files: target/x86_64-pc-windows-msvc/release/lucid-optimizer.exe
+          files: target/${{ matrix.target }}/release/${{ matrix.artifact }}
