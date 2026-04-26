@@ -89,10 +89,8 @@ fn value_input_action(key: KeyEvent) -> Option<Action> {
 }
 
 fn adding_action(key: KeyEvent, state: &AddState) -> Option<Action> {
-    let is_input_focus = matches!(state.focus, AddFocus::InputValue(_));
-
-    if is_input_focus {
-        return match key.code {
+    match &state.focus {
+        AddFocus::InputValue(_) => match key.code {
             KeyCode::Left => Some(Action::Left),
             KeyCode::Right => Some(Action::Right),
             KeyCode::Char(c) if c.is_ascii_digit() || c == '-' => Some(Action::InputChar(c)),
@@ -100,16 +98,23 @@ fn adding_action(key: KeyEvent, state: &AddState) -> Option<Action> {
             KeyCode::Enter => Some(Action::Enter),
             KeyCode::Esc => Some(Action::Escape),
             _ => None,
-        };
-    }
-
-    // SelectKind steps
-    match key.code {
-        KeyCode::Up | KeyCode::Char('k') => Some(Action::Up),
-        KeyCode::Down | KeyCode::Char('j') => Some(Action::Down),
-        KeyCode::Enter => Some(Action::Enter),
-        KeyCode::Esc => Some(Action::Escape),
-        _ => None,
+        },
+        AddFocus::SelectKind(_) => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => Some(Action::Up),
+            KeyCode::Down | KeyCode::Char('j') => Some(Action::Down),
+            KeyCode::Enter => Some(Action::Enter),
+            KeyCode::Esc => Some(Action::Escape),
+            _ => None,
+        },
+        AddFocus::SelectRow => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => Some(Action::Up),
+            KeyCode::Down | KeyCode::Char('j') => Some(Action::Down),
+            KeyCode::Char('o') => Some(Action::EditKind),
+            KeyCode::Char('v') | KeyCode::Enter => Some(Action::EditValue),
+            KeyCode::Char('w') if state.both_complete() => Some(Action::Confirm),
+            KeyCode::Esc => Some(Action::Escape),
+            _ => None,
+        },
     }
 }
 

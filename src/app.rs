@@ -15,6 +15,7 @@ pub struct AddState {
     pub value1: String,
     pub kind2: Option<OptionKind>,
     pub value2: String,
+    pub val_draft: String,
     pub focus: AddFocus,
     pub row_cursor: usize,
     pub kind_cursor: usize,
@@ -28,6 +29,7 @@ impl AddState {
             value1: String::new(),
             kind2: None,
             value2: String::new(),
+            val_draft: String::new(),
             focus: AddFocus::SelectKind(0),
             row_cursor: 0,
             kind_cursor: 0,
@@ -74,6 +76,7 @@ pub enum Action {
     AddItem,
     EditKind,
     EditValue,
+    Confirm,
     Undo,
     Redo,
     Quit,
@@ -473,34 +476,44 @@ impl App {
                     state.row_cursor = (state.row_cursor + 1).min(1);
                     self.mode = Mode::Adding(state);
                 }
-                Action::Enter => {
-                    if state.both_complete() {
-                        self.push_undo();
-                        self.items.push(Item {
-                            options: [
-                                ItemOption {
-                                    kind: state.kind1.unwrap(),
-                                    value: state.value1.parse().unwrap(),
-                                },
-                                ItemOption {
-                                    kind: state.kind2.unwrap(),
-                                    value: state.value2.parse().unwrap(),
-                                },
-                            ],
-                        });
-                        self.selected = self.items.len() - 1;
-                        self.dirty = true;
-                        self.mode = Mode::List;
+                Action::EditKind => {
+                    let row = state.row_cursor as u8;
+                    state.kind_cursor = if row == 0 {
+                        state.kind1.and_then(|k| OptionKind::ALL.iter().position(|&x| x == k)).unwrap_or(0)
                     } else {
-                        let kind_idx = if state.row_cursor == 0 {
-                            state.kind1.and_then(|k| OptionKind::ALL.iter().position(|&x| x == k)).unwrap_or(0)
-                        } else {
-                            state.kind2.and_then(|k| OptionKind::ALL.iter().position(|&x| x == k)).unwrap_or(0)
-                        };
-                        state.kind_cursor = kind_idx;
-                        state.focus = AddFocus::SelectKind(state.row_cursor as u8);
-                        self.mode = Mode::Adding(state);
+                        state.kind2.and_then(|k| OptionKind::ALL.iter().position(|&x| x == k)).unwrap_or(0)
+                    };
+                    state.focus = AddFocus::SelectKind(row);
+                    self.mode = Mode::Adding(state);
+                }
+                Action::EditValue => {
+                    let row = state.row_cursor as u8;
+                    let has_kind = if row == 0 { state.kind1.is_some() } else { state.kind2.is_some() };
+                    if has_kind {
+                        let val = if row == 0 { state.value1.clone() } else { state.value2.clone() };
+                        state.val_draft = val.clone();
+                        state.val_cursor = val.len();
+                        state.focus = AddFocus::InputValue(row);
                     }
+                    self.mode = Mode::Adding(state);
+                }
+                Action::Confirm if state.both_complete() => {
+                    self.push_undo();
+                    self.items.push(Item {
+                        options: [
+                            ItemOption {
+                                kind: state.kind1.unwrap(),
+                                value: state.value1.parse().unwrap(),
+                            },
+                            ItemOption {
+                                kind: state.kind2.unwrap(),
+                                value: state.value2.parse().unwrap(),
+                            },
+                        ],
+                    });
+                    self.selected = self.items.len() - 1;
+                    self.dirty = true;
+                    self.mode = Mode::List;
                 }
                 Action::Escape => {
                     self.mode = Mode::List;
@@ -518,14 +531,15 @@ impl App {
                 }
                 Action::Enter => {
                     let kind = OptionKind::ALL[state.kind_cursor];
-                    let val_cursor = if row == 0 {
+                    if row == 0 {
                         state.kind1 = Some(kind);
-                        state.value1.len()
+                        state.val_draft = state.value1.clone();
                     } else {
                         state.kind2 = Some(kind);
-                        state.value2.len()
+                        state.val_draft = state.value2.clone();
                     };
-                    state.val_cursor = val_cursor;
+                    state.val_cursor = state.val_draft.len();
+                    state.row_cursor = row as usize;
                     state.focus = AddFocus::InputValue(row);
                     self.mode = Mode::Adding(state);
                 }
@@ -541,55 +555,59 @@ impl App {
                     self.mode = Mode::Adding(state);
                 }
                 Action::Right => {
-                    let len = if row == 0 { state.value1.len() } else { state.value2.len() };
+                    let len = state.val_draft.len();
                     state.val_cursor = (state.val_cursor + 1).min(len);
                     self.mode = Mode::Adding(state);
                 }
                 Action::InputChar(c) => {
-                    let val = if row == 0 { &mut state.value1 } else { &mut state.value2 };
-                    if (c == '-' && state.val_cursor == 0 && !val.starts_with('-'))
+                    if (c == '-' && state.val_cursor == 0 && !state.val_draft.starts_with('-'))
                         || c.is_ascii_digit()
                     {
-                        val.insert(state.val_cursor, c);
+                        state.val_draft.insert(state.val_cursor, c);
                         state.val_cursor += 1;
                     }
                     self.mode = Mode::Adding(state);
                 }
                 Action::Backspace => {
                     if state.val_cursor > 0 {
-                        let val = if row == 0 { &mut state.value1 } else { &mut state.value2 };
-                        val.remove(state.val_cursor - 1);
+                        state.val_draft.remove(state.val_cursor - 1);
                         state.val_cursor -= 1;
                     }
                     self.mode = Mode::Adding(state);
                 }
                 Action::Enter => {
-                    let valid = if row == 0 {
-                        !state.value1.is_empty() && state.value1.parse::<i32>().is_ok()
-                    } else {
-                        !state.value2.is_empty() && state.value2.parse::<i32>().is_ok()
-                    };
+                    let valid = !state.val_draft.is_empty() && state.val_draft.parse::<i32>().is_ok();
                     if valid {
-                        if row == 0 {
-                            let kind_idx = state.kind2.and_then(|k| OptionKind::ALL.iter().position(|&x| x == k)).unwrap_or(0);
-                            state.kind_cursor = kind_idx;
-                            state.row_cursor = 1;
-                            state.focus = AddFocus::SelectKind(1);
+                        if row == 0 { state.value1 = state.val_draft.clone(); } else { state.value2 = state.val_draft.clone(); }
+                        let other = 1 - row;
+                        let other_has_kind = if other == 0 { state.kind1.is_some() } else { state.kind2.is_some() };
+                        let other_val = if other == 0 { &state.value1 } else { &state.value2 };
+                        let other_has_value = !other_val.is_empty() && other_val.parse::<i32>().is_ok();
+                        if !other_has_kind {
+                            state.kind_cursor = if other == 0 {
+                                state.kind1.and_then(|k| OptionKind::ALL.iter().position(|&x| x == k)).unwrap_or(0)
+                            } else {
+                                state.kind2.and_then(|k| OptionKind::ALL.iter().position(|&x| x == k)).unwrap_or(0)
+                            };
+                            state.row_cursor = other as usize;
+                            state.focus = AddFocus::SelectKind(other);
+                        } else if !other_has_value {
+                            state.val_draft = String::new();
+                            state.val_cursor = 0;
+                            state.row_cursor = other as usize;
+                            state.focus = AddFocus::InputValue(other);
                         } else {
-                            state.row_cursor = 0;
+                            state.row_cursor = row as usize;
                             state.focus = AddFocus::SelectRow;
                         }
+                        self.mode = Mode::Adding(state);
+                    } else {
                         self.mode = Mode::Adding(state);
                     }
                 }
                 Action::Escape => {
-                    let kind_idx = if row == 0 {
-                        state.kind1.and_then(|k| OptionKind::ALL.iter().position(|&x| x == k)).unwrap_or(0)
-                    } else {
-                        state.kind2.and_then(|k| OptionKind::ALL.iter().position(|&x| x == k)).unwrap_or(0)
-                    };
-                    state.kind_cursor = kind_idx;
-                    state.focus = AddFocus::SelectKind(row);
+                    state.row_cursor = row as usize;
+                    state.focus = AddFocus::SelectRow;
                     self.mode = Mode::Adding(state);
                 }
                 _ => {}
@@ -736,19 +754,19 @@ mod tests {
         assert!(matches!(app.mode, Mode::Adding(ref s) if matches!(s.focus, AddFocus::SelectKind(0))));
         // SelectKind(0): cursor=0 (Magic) → Enter → InputValue(0)
         app.apply(Action::Enter);
-        // InputValue(0): type "5" → Enter → SelectKind(1) (목록 열림)
+        // InputValue(0): type "5" → Enter → other(1) has no kind → SelectKind(1)
         app.apply(Action::InputChar('5'));
         app.apply(Action::Enter);
         assert!(matches!(app.mode, Mode::Adding(ref s) if matches!(s.focus, AddFocus::SelectKind(1))));
         // SelectKind(1): Down → cursor=1 (MagicPercent) → Enter → InputValue(1)
         app.apply(Action::Down);
         app.apply(Action::Enter);
-        // InputValue(1): type "3" → Enter → SelectRow (목록 닫힘, both_complete)
+        // InputValue(1): type "3" → Enter → both_complete → SelectRow
         app.apply(Action::InputChar('3'));
         app.apply(Action::Enter);
         assert!(matches!(app.mode, Mode::Adding(ref s) if matches!(s.focus, AddFocus::SelectRow)));
-        // SelectRow + both_complete → Enter → List + item added
-        app.apply(Action::Enter);
+        // SelectRow: w → 아이템 추가 확정 → List
+        app.apply(Action::Confirm);
         assert_eq!(app.items.len(), before + 1);
         assert!(app.dirty);
         assert!(matches!(app.mode, Mode::List));
@@ -777,9 +795,7 @@ mod tests {
         assert!(matches!(app.mode, Mode::Adding(ref s) if matches!(s.focus, AddFocus::SelectKind(0))));
         app.apply(Action::Enter);              // InputValue(0)
         assert!(matches!(app.mode, Mode::Adding(ref s) if matches!(s.focus, AddFocus::InputValue(0))));
-        app.apply(Action::Escape);             // back to SelectKind(0)
-        assert!(matches!(app.mode, Mode::Adding(ref s) if matches!(s.focus, AddFocus::SelectKind(0))));
-        app.apply(Action::Escape);             // back to SelectRow
+        app.apply(Action::Escape);             // back to SelectRow (A 수정)
         assert!(matches!(app.mode, Mode::Adding(ref s) if matches!(s.focus, AddFocus::SelectRow)));
         app.apply(Action::Escape);             // back to List
         assert!(matches!(app.mode, Mode::List));

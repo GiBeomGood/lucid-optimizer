@@ -303,9 +303,9 @@ fn render_hint(f: &mut Frame, app: &App, area: Rect) {
                     Span::styled("추가 중  ", Style::default().fg(ACCENT)),
                 ];
                 let extra = if state.both_complete() {
-                    hint_line(&[("↑↓", "이동"), ("Enter", "완료"), ("Esc", "취소")])
+                    hint_line(&[("↑↓", "이동"), ("o", "옵션"), ("v", "값 편집"), ("w", "추가 확정"), ("Esc", "취소")])
                 } else {
-                    hint_line(&[("↑↓", "이동"), ("Enter", "옵션 설정"), ("Esc", "취소")])
+                    hint_line(&[("↑↓", "이동"), ("o", "옵션"), ("v", "값 편집"), ("Esc", "취소")])
                 };
                 spans.extend(extra.spans);
                 Line::from(spans)
@@ -453,7 +453,7 @@ fn build_add_option_row(state: &AddState, opt_num: u8) -> Line<'static> {
 
     let label = Span::styled(format!("{opt_num}. "), label_style);
 
-    let (kind, buf) = match opt_num {
+    let (kind, committed_val) = match opt_num {
         1 => (&state.kind1, state.value1.as_str()),
         2 => (&state.kind2, state.value2.as_str()),
         _ => return Line::default(),
@@ -471,9 +471,9 @@ fn build_add_option_row(state: &AddState, opt_num: u8) -> Line<'static> {
     let mut spans = vec![arrow, label, kind_span, Span::raw("    ")];
 
     if is_value_inputting {
-        spans.extend(cursor_spans(buf, state.val_cursor));
-    } else if kind.is_some() && !buf.is_empty() {
-        spans.push(Span::raw(buf.to_string()));
+        spans.extend(cursor_spans(state.val_draft.as_str(), state.val_cursor));
+    } else if kind.is_some() && !committed_val.is_empty() {
+        spans.push(Span::raw(committed_val.to_string()));
     } else {
         spans.push(Span::styled("<값 입력>", Style::default().fg(MUTED)));
     }
