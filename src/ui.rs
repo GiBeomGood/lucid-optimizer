@@ -189,7 +189,7 @@ fn build_option_spans<'a>(
     opt_idx: usize,
     opt: &'a crate::item::ItemOption,
 ) -> Vec<Span<'a>> {
-    let label = format!("{}: ", opt.kind.display_name());
+    let label = format!("{}  ", pad_kind(opt.kind.display_name()));
 
     match &app.mode {
         Mode::Edit { item_idx: i, option_idx: o } if *i == item_idx => {
