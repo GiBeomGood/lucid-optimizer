@@ -1,4 +1,5 @@
 use crate::item::{Item, ItemOption, OptionKind};
+use crate::stats::BaseStats;
 use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +47,10 @@ impl AddState {
 
 #[derive(Debug, Clone)]
 pub enum Mode {
+    Home { cursor: usize },
     List,
+    Stats { cursor: usize },
+    EditStatValue { field_idx: usize, buffer: String, cursor: usize },
     Edit { item_idx: usize, option_idx: usize },
     EditValue { item_idx: usize, option_idx: usize, buffer: String, cursor: usize },
     Adding(AddState),
@@ -76,31 +80,41 @@ pub enum Action {
 
 pub struct App {
     pub items: Vec<Item>,
+    pub stats: BaseStats,
     pub mode: Mode,
     pub selected: usize,
     pub scroll_offset: usize,
     pub dirty: bool,
+    pub stats_dirty: bool,
     pub flash: Option<(String, Instant)>,
     pub should_quit: bool,
     pub file_path: String,
+    pub stats_path: String,
     undo_stack: Vec<Vec<Item>>,
     redo_stack: Vec<Vec<Item>>,
 }
 
 impl App {
-    pub fn new(items: Vec<Item>, file_path: String) -> Self {
+    pub fn new(items: Vec<Item>, file_path: String, stats: BaseStats, stats_path: String) -> Self {
         Self {
             items,
-            mode: Mode::List,
+            stats,
+            mode: Mode::Home { cursor: 0 },
             selected: 0,
             scroll_offset: 0,
             dirty: false,
+            stats_dirty: false,
             flash: None,
             should_quit: false,
             file_path,
+            stats_path,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
         }
+    }
+
+    pub fn is_any_dirty(&self) -> bool {
+        self.dirty || self.stats_dirty
     }
 
     pub fn tick(&mut self) {
@@ -129,16 +143,27 @@ impl App {
             Action::Quit => self.handle_quit(),
             Action::QuitForce => self.should_quit = true,
             Action::QuitSave => {
-                self.do_save();
+                self.do_save_all();
                 self.should_quit = true;
             }
-            Action::Save => self.do_save(),
+            Action::Save => {
+                let mode = self.mode.clone();
+                match mode {
+                    Mode::Stats { .. } | Mode::EditStatValue { .. } => self.do_save_stats(),
+                    _ => self.do_save(),
+                }
+            }
             Action::Undo => self.do_undo(),
             Action::Redo => self.do_redo(),
             _ => {
                 let mode = self.mode.clone();
                 match mode {
+                    Mode::Home { cursor } => self.handle_home(action, cursor),
                     Mode::List => self.handle_list(action),
+                    Mode::Stats { cursor } => self.handle_stats(action, cursor),
+                    Mode::EditStatValue { field_idx, buffer, cursor } => {
+                        self.handle_edit_stat_value(action, field_idx, buffer, cursor)
+                    }
                     Mode::Edit { item_idx, option_idx } => {
                         self.handle_edit(action, item_idx, option_idx)
                     }
@@ -168,6 +193,110 @@ impl App {
             Err(e) => {
                 self.flash = Some((format!("저장 실패: {e}"), Instant::now()));
             }
+        }
+    }
+
+    fn do_save_stats(&mut self) {
+        match crate::storage::save_stats(&self.stats_path.clone(), &self.stats) {
+            Ok(_) => {
+                self.stats_dirty = false;
+                self.flash = Some(("✓ 저장됨".to_string(), Instant::now()));
+            }
+            Err(e) => {
+                self.flash = Some((format!("저장 실패: {e}"), Instant::now()));
+            }
+        }
+    }
+
+    fn do_save_all(&mut self) {
+        if self.dirty {
+            self.do_save();
+        }
+        if self.stats_dirty {
+            self.do_save_stats();
+        }
+    }
+
+    fn handle_home(&mut self, action: Action, cursor: usize) {
+        match action {
+            Action::Up => {
+                self.mode = Mode::Home { cursor: cursor.saturating_sub(1) };
+            }
+            Action::Down => {
+                self.mode = Mode::Home { cursor: (cursor + 1).min(1) };
+            }
+            Action::Enter => {
+                if cursor == 0 {
+                    self.mode = Mode::Stats { cursor: 0 };
+                } else {
+                    self.mode = Mode::List;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_stats(&mut self, action: Action, cursor: usize) {
+        match action {
+            Action::Up => {
+                self.mode = Mode::Stats { cursor: cursor.saturating_sub(1) };
+            }
+            Action::Down => {
+                self.mode = Mode::Stats { cursor: (cursor + 1).min(crate::stats::FIELD_NAMES.len() - 1) };
+            }
+            Action::Enter => {
+                let buf = self.stats.get(cursor).to_string();
+                let cur = buf.len();
+                self.mode = Mode::EditStatValue { field_idx: cursor, buffer: buf, cursor: cur };
+            }
+            Action::Escape => {
+                self.mode = Mode::Home { cursor: 0 };
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_edit_stat_value(
+        &mut self,
+        action: Action,
+        field_idx: usize,
+        mut buffer: String,
+        mut cursor: usize,
+    ) {
+        match action {
+            Action::Left => {
+                cursor = cursor.saturating_sub(1);
+                self.mode = Mode::EditStatValue { field_idx, buffer, cursor };
+            }
+            Action::Right => {
+                cursor = (cursor + 1).min(buffer.len());
+                self.mode = Mode::EditStatValue { field_idx, buffer, cursor };
+            }
+            Action::InputChar(c) => {
+                if (c == '-' && cursor == 0 && !buffer.starts_with('-')) || c.is_ascii_digit() {
+                    buffer.insert(cursor, c);
+                    cursor += 1;
+                }
+                self.mode = Mode::EditStatValue { field_idx, buffer, cursor };
+            }
+            Action::Backspace => {
+                if cursor > 0 {
+                    buffer.remove(cursor - 1);
+                    cursor -= 1;
+                }
+                self.mode = Mode::EditStatValue { field_idx, buffer, cursor };
+            }
+            Action::Enter => {
+                if let Ok(val) = buffer.parse::<i32>() {
+                    self.stats.set(field_idx, val);
+                    self.stats_dirty = true;
+                }
+                self.mode = Mode::Stats { cursor: field_idx };
+            }
+            Action::Escape => {
+                self.mode = Mode::Stats { cursor: field_idx };
+            }
+            _ => {}
         }
     }
 
@@ -439,7 +568,7 @@ impl App {
     fn handle_quit_confirm(&mut self, action: Action) {
         match action {
             Action::Save | Action::QuitSave => {
-                self.do_save();
+                self.do_save_all();
                 self.should_quit = true;
             }
             Action::Quit | Action::QuitForce => {
@@ -473,7 +602,9 @@ mod tests {
                 ],
             },
         ];
-        App::new(items, "test.json".to_string())
+        let mut app = App::new(items, "test.json".to_string(), Default::default(), "stats.json".to_string());
+        app.mode = Mode::List;
+        app
     }
 
     #[test]

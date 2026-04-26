@@ -1,4 +1,5 @@
 use crate::item::Item;
+use crate::stats::BaseStats;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -14,6 +15,27 @@ pub fn load(path: &str) -> Result<Vec<Item>, Box<dyn std::error::Error>> {
     }
     let items: Vec<Item> = serde_json::from_str(trimmed)?;
     Ok(items)
+}
+
+pub fn load_stats(path: &str) -> Result<BaseStats, Box<dyn std::error::Error>> {
+    if !Path::new(path).exists() {
+        return Ok(BaseStats::default());
+    }
+    let content = fs::read_to_string(path)?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Ok(BaseStats::default());
+    }
+    Ok(serde_json::from_str(trimmed)?)
+}
+
+pub fn save_stats(path: &str, stats: &BaseStats) -> io::Result<()> {
+    if Path::new(path).exists() {
+        let bak = format!("{path}.bak");
+        let _ = fs::copy(path, bak);
+    }
+    let json = serde_json::to_string_pretty(stats).map_err(io::Error::other)?;
+    fs::write(path, json)
 }
 
 pub fn save(path: &str, items: &[Item]) -> io::Result<()> {

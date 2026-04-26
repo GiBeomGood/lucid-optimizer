@@ -11,6 +11,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 mod app;
 mod event;
 mod item;
+mod stats;
 mod storage;
 mod ui;
 
@@ -19,8 +20,10 @@ use event::key_to_action;
 
 fn main() -> io::Result<()> {
     let path = std::env::args().nth(1).unwrap_or_else(|| "items.json".to_string());
+    let stats_path = std::env::args().nth(2).unwrap_or_else(|| "stats.json".to_string());
     let items = storage::load(&path).unwrap_or_default();
-    let mut app = App::new(items, path);
+    let stats = storage::load_stats(&stats_path).unwrap_or_default();
+    let mut app = App::new(items, path, stats, stats_path);
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();

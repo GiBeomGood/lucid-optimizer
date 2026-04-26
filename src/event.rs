@@ -4,12 +4,37 @@ use crate::app::{Action, AddFocus, AddState, App, Mode};
 
 pub fn key_to_action(app: &App, key: KeyEvent) -> Option<Action> {
     match &app.mode {
+        Mode::Home { .. } => home_action(key),
         Mode::List => list_action(key),
+        Mode::Stats { .. } => stats_action(key),
+        Mode::EditStatValue { .. } => value_input_action(key),
         Mode::Edit { .. } => edit_action(key),
         Mode::EditValue { .. } => value_input_action(key),
         Mode::Adding(state) => adding_action(key, state),
         Mode::ConfirmDelete { .. } => confirm_delete_action(key),
         Mode::QuitConfirm => quit_confirm_action(key),
+    }
+}
+
+fn home_action(key: KeyEvent) -> Option<Action> {
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => Some(Action::Up),
+        KeyCode::Down | KeyCode::Char('j') => Some(Action::Down),
+        KeyCode::Enter => Some(Action::Enter),
+        KeyCode::Char('q') => Some(Action::Quit),
+        _ => None,
+    }
+}
+
+fn stats_action(key: KeyEvent) -> Option<Action> {
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => Some(Action::Up),
+        KeyCode::Down | KeyCode::Char('j') => Some(Action::Down),
+        KeyCode::Enter => Some(Action::Enter),
+        KeyCode::Esc => Some(Action::Escape),
+        KeyCode::Char('s') => Some(Action::Save),
+        KeyCode::Char('q') => Some(Action::Quit),
+        _ => None,
     }
 }
 

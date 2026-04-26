@@ -9,6 +9,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::{AddFocus, AddState, App, Mode};
 use crate::item::OptionKind;
+use crate::stats::FIELD_NAMES;
 
 // Terminal display width of the widest option name ("재사용 대기시간 감소" = 20 cols).
 // All kind names and the placeholder are padded to this so the value column stays aligned.
@@ -40,7 +41,14 @@ pub fn render(f: &mut Frame, app: &App) {
         ])
         .split(area);
 
-    render_main(f, app, chunks[0]);
+    match &app.mode {
+        Mode::Home { cursor } => render_home(f, app, chunks[0], *cursor),
+        Mode::Stats { cursor } => render_stats(f, app, chunks[0], *cursor),
+        Mode::EditStatValue { field_idx, buffer, cursor } => {
+            render_stats_editing(f, app, chunks[0], *field_idx, buffer, *cursor)
+        }
+        _ => render_main(f, app, chunks[0]),
+    }
     render_hint(f, app, chunks[1]);
 
     match &app.mode {
@@ -228,6 +236,24 @@ fn cursor_spans(buf: &str, cursor: usize) -> Vec<Span<'static>> {
 
 fn render_hint(f: &mut Frame, app: &App, area: Rect) {
     let line = match &app.mode {
+        Mode::Home { .. } => hint_line(&[
+            ("↑↓", "이동"),
+            ("Enter", "선택"),
+            ("q", "종료"),
+        ]),
+        Mode::Stats { .. } => hint_line(&[
+            ("↑↓", "이동"),
+            ("Enter", "편집"),
+            ("s", "저장"),
+            ("Esc", "뒤로"),
+        ]),
+        Mode::EditStatValue { .. } => hint_line(&[
+            ("숫자/-", "입력"),
+            ("←→", "커서"),
+            ("Backspace", "삭제"),
+            ("Enter", "적용"),
+            ("Esc", "뒤로"),
+        ]),
         Mode::List => hint_line(&[
             ("↑↓", "이동"),
             ("Enter", "편집"),
@@ -284,7 +310,7 @@ fn render_hint(f: &mut Frame, app: &App, area: Rect) {
             Span::styled(": 취소", Style::default().fg(MUTED)),
         ]),
         Mode::QuitConfirm => {
-            if app.dirty {
+            if app.is_any_dirty() {
                 Line::from(vec![
                     Span::styled("s", Style::default().fg(ACCENT)),
                     Span::styled(": 저장 후 종료  ", Style::default().fg(MUTED)),
@@ -434,6 +460,122 @@ fn build_add_option_row(state: &AddState, opt_num: u8) -> Line<'static> {
     Line::from(spans)
 }
 
+fn render_home(f: &mut Frame, app: &App, area: Rect, cursor: usize) {
+    let flash_span = if let Some((msg, _)) = &app.flash {
+        Span::styled(msg.as_str(), Style::default().fg(Color::Green))
+    } else {
+        Span::raw("")
+    };
+
+    let title_line = Line::from(vec![
+        Span::styled(" Lucid Optimizer ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        flash_span,
+    ]);
+
+    let block = Block::default().borders(Borders::ALL).title(title_line);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let menu_items = ["기본 정보 보기", "아이템 목록 보기"];
+    let total_height = menu_items.len() as u16;
+    let start_y = inner.y + inner.height.saturating_sub(total_height) / 2;
+
+    for (i, label) in menu_items.iter().enumerate() {
+        let y = start_y + i as u16;
+        if y >= inner.y + inner.height {
+            break;
+        }
+        let (arrow, style) = if i == cursor {
+            (Span::styled(" ▶ ", Style::default().fg(ACCENT)), Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))
+        } else {
+            (Span::raw("   "), Style::default())
+        };
+        let line = Line::from(vec![arrow, Span::styled(label.to_string(), style)]);
+        f.render_widget(Paragraph::new(line), Rect { x: inner.x, y, width: inner.width, height: 1 });
+    }
+}
+
+fn render_stats(f: &mut Frame, app: &App, area: Rect, cursor: usize) {
+    render_stats_inner(f, app, area, None, None, cursor);
+}
+
+fn render_stats_editing(f: &mut Frame, app: &App, area: Rect, field_idx: usize, buffer: &str, val_cursor: usize) {
+    render_stats_inner(f, app, area, Some(field_idx), Some((buffer, val_cursor)), field_idx);
+}
+
+fn render_stats_inner(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    editing: Option<usize>,
+    edit_buf: Option<(&str, usize)>,
+    cursor: usize,
+) {
+    let dirty_span = if app.stats_dirty {
+        Span::styled("● 저장 안 됨", Style::default().fg(WARN))
+    } else {
+        Span::raw("")
+    };
+
+    let flash_span = if let Some((msg, _)) = &app.flash {
+        Span::styled(msg.as_str(), Style::default().fg(Color::Green))
+    } else {
+        dirty_span
+    };
+
+    let title_line = Line::from(vec![
+        Span::styled(" 기본 정보 ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        flash_span,
+    ]);
+
+    let block = Block::default().borders(Borders::ALL).title(title_line);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    for (i, name) in FIELD_NAMES.iter().enumerate() {
+        let y = inner.y + i as u16;
+        if y >= inner.y + inner.height {
+            break;
+        }
+
+        let is_cursor = i == cursor;
+        let is_editing = editing == Some(i);
+
+        let arrow = if is_cursor {
+            Span::styled(" ▶ ", Style::default().fg(ACCENT))
+        } else {
+            Span::raw("   ")
+        };
+
+        let label = format!("{}: ", pad_kind(name));
+        let label_style = if is_cursor {
+            Style::default().fg(ACCENT)
+        } else {
+            Style::default()
+        };
+
+        let mut spans = vec![arrow, Span::styled(label, label_style)];
+
+        if is_editing {
+            let (buf, val_cursor) = edit_buf.unwrap();
+            spans.extend(cursor_spans(buf, val_cursor));
+        } else {
+            let val = app.stats.get(i).to_string();
+            let val_style = if is_cursor {
+                Style::default().fg(ACCENT).add_modifier(Modifier::UNDERLINED)
+            } else {
+                Style::default()
+            };
+            spans.push(Span::styled(val, val_style));
+        }
+
+        let line = Line::from(spans);
+        f.render_widget(Paragraph::new(line), Rect { x: inner.x, y, width: inner.width, height: 1 });
+    }
+}
+
 fn render_quit_confirm(f: &mut Frame, app: &App, area: Rect) {
     let popup_width = 50u16.min(area.width.saturating_sub(4));
     let popup_height = 5u16;
@@ -443,7 +585,7 @@ fn render_quit_confirm(f: &mut Frame, app: &App, area: Rect) {
 
     f.render_widget(Clear, popup_area);
 
-    let (border_color, title) = if app.dirty {
+    let (border_color, title) = if app.is_any_dirty() {
         (WARN, " 저장 안 된 변경이 있습니다 ")
     } else {
         (ACCENT, " 종료 확인 ")
@@ -460,7 +602,7 @@ fn render_quit_confirm(f: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(popup_area);
     f.render_widget(block, popup_area);
 
-    let content = if app.dirty {
+    let content = if app.is_any_dirty() {
         vec![Line::from(vec![
             Span::styled("s", Style::default().fg(ACCENT)),
             Span::raw(": 저장 후 종료  "),
