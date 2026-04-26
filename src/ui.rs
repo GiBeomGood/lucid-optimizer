@@ -3,12 +3,12 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Gauge, Paragraph, Wrap},
 };
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{AddFocus, AddState, App, Mode};
-use crate::item::OptionKind;
+use crate::item::{Item, OptionKind};
 use crate::stats::FIELD_NAMES;
 
 // Terminal display width of the widest option name ("재사용 대기시간 감소" = 20 cols).
@@ -53,6 +53,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
         Mode::EditStatValue { field_idx, buffer, cursor } => {
             render_stats_editing(f, app, chunks[0], *field_idx, buffer, *cursor)
         }
+        Mode::Optimizing { status, progress } => {
+            render_optimizing(f, chunks[0], status, *progress)
+        }
+        Mode::OptimizeResult { cursor } => render_optimize_result(f, app, chunks[0], *cursor),
+        Mode::OptimizeDetail { combo_idx, cursor } => {
+            render_optimize_detail(f, app, chunks[0], *combo_idx, *cursor)
+        }
         _ => render_main(f, app, chunks[0]),
     }
     render_hint(f, app, chunks[1]);
@@ -62,6 +69,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
     }
     if let Mode::EditKind { option_idx, kind_cursor, .. } = &app.mode {
         render_edit_kind_overlay(f, *option_idx, *kind_cursor, area);
+    }
+    if let Mode::OptimizeInput { n_buf, k_buf, focus, n_cursor, k_cursor } = &app.mode {
+        render_optimize_input_overlay(f, app, n_buf, k_buf, *focus, *n_cursor, *k_cursor, area);
     }
 }
 
@@ -349,6 +359,22 @@ fn render_hint(f: &mut Frame, app: &App, area: Rect) {
                 ])
             }
         }
+        Mode::OptimizeInput { .. } => hint_line(&[
+            ("숫자", "입력"),
+            ("←→", "커서"),
+            ("Enter", "다음/시작"),
+            ("Esc", "취소"),
+        ]),
+        Mode::Optimizing { .. } => hint_line(&[("Esc", "취소")]),
+        Mode::OptimizeResult { .. } => hint_line(&[
+            ("↑↓", "이동"),
+            ("Enter", "상세 보기"),
+            ("q / Esc", "뒤로"),
+        ]),
+        Mode::OptimizeDetail { .. } => hint_line(&[
+            ("↑↓", "이동"),
+            ("q / Esc", "뒤로"),
+        ]),
     };
     f.render_widget(Paragraph::new(line), area);
 }
@@ -498,7 +524,7 @@ fn render_home(f: &mut Frame, app: &App, area: Rect, cursor: usize) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let menu_items = ["기본 정보 보기", "몽환의 결정 목록 보기"];
+    let menu_items = ["기본 정보 보기", "몽환의 결정 목록 보기", "최적 조합 찾기"];
     let total_height = menu_items.len() as u16;
     let start_y = inner.y + inner.height.saturating_sub(total_height) / 2;
 
@@ -706,5 +732,288 @@ fn compute_offset(selected: usize, current_offset: usize, visible: usize) -> usi
         selected + 1 - visible
     } else {
         current_offset
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_optimize_input_overlay(
+    f: &mut Frame,
+    app: &App,
+    n_buf: &str,
+    k_buf: &str,
+    focus: u8,
+    n_cursor: usize,
+    k_cursor: usize,
+    area: Rect,
+) {
+    let popup_height = 8u16;
+    let popup_width = 50u16.min(area.width.saturating_sub(4));
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect { x, y, width: popup_width, height: popup_height };
+
+    f.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Span::styled(
+            " 최적 조합 찾기 ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ));
+
+    let inner = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    let total_items = app.items.len();
+    let info_line = Line::from(vec![Span::styled(
+        format!("  보유 결정: {total_items}개"),
+        Style::default().fg(MUTED),
+    )]);
+
+
+    // Build n row
+    let mut n_spans = vec![Span::styled(
+        "  사용할 결정 수 (n): ",
+        if focus == 0 { Style::default().fg(ACCENT) } else { Style::default() },
+    )];
+    if focus == 0 {
+        n_spans.extend(cursor_spans(n_buf, n_cursor));
+    } else {
+        n_spans.push(Span::raw(n_buf.to_string()));
+    }
+    let n_line = Line::from(n_spans);
+
+    // Build k row
+    let mut k_spans = vec![Span::styled(
+        "  top-k:              ",
+        if focus == 1 { Style::default().fg(ACCENT) } else { Style::default() },
+    )];
+    if focus == 1 {
+        k_spans.extend(cursor_spans(k_buf, k_cursor));
+    } else {
+        k_spans.push(Span::raw(k_buf.to_string()));
+    }
+    let k_line = Line::from(k_spans);
+
+    let lines = vec![
+        info_line,
+        Line::from(vec![]),
+        n_line,
+        k_line,
+        Line::from(vec![]),
+        Line::from(vec![Span::styled(
+            "  Enter: 다음/시작  |  Esc: 취소",
+            Style::default().fg(MUTED),
+        )]),
+    ];
+
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+fn render_optimizing(
+    f: &mut Frame,
+    area: Rect,
+    status: &str,
+    progress: Option<(usize, usize)>,
+) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Span::styled(
+            " 최적 조합 탐색 중... ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let status_line = Line::from(vec![Span::raw(format!("  {status}"))]);
+
+    if let Some((done, total)) = progress {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Min(0)])
+            .split(inner);
+
+        f.render_widget(Paragraph::new(status_line), chunks[0]);
+
+        let ratio = if total == 0 { 0.0 } else { done as f64 / total as f64 };
+        let label = format!("{done}/{total}");
+        let gauge = Gauge::default()
+            .gauge_style(Style::default().fg(ACCENT).bg(Color::DarkGray))
+            .ratio(ratio)
+            .label(label);
+        f.render_widget(gauge, chunks[1]);
+    } else {
+        f.render_widget(Paragraph::new(status_line), inner);
+    }
+}
+
+fn render_optimize_result(f: &mut Frame, app: &App, area: Rect, cursor: usize) {
+    let n = app.optimizer_n;
+    let k = app.optimizer_k;
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Span::styled(
+            format!(" 최적 조합 결과 (n={n}, top-{k}) "),
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let results = match &app.optimizer_results {
+        Some(r) => r,
+        None => return,
+    };
+
+    if results.is_empty() {
+        let msg = Line::from(vec![Span::styled(
+            "유효한 조합이 없습니다. (크리티컬 확률 100% 미만)",
+            Style::default().fg(MUTED),
+        )]);
+        let centered = Rect {
+            x: inner.x,
+            y: inner.y + inner.height / 2,
+            width: inner.width,
+            height: 1,
+        };
+        f.render_widget(Paragraph::new(msg).alignment(Alignment::Center), centered);
+        return;
+    }
+
+    let min_strength = results.last().map(|r| r.strength).unwrap_or(1.0);
+    let visible = inner.height as usize;
+    let offset = compute_offset(cursor, 0, visible);
+
+    for (display_idx, result_idx) in (offset..).take(visible).enumerate() {
+        if result_idx >= results.len() {
+            break;
+        }
+        let y = inner.y + display_idx as u16;
+        if y >= inner.y + inner.height {
+            break;
+        }
+        let combo = &results[result_idx];
+        let ratio = if min_strength == 0.0 { 1.0 } else { combo.strength / min_strength };
+        let ratio_str = format!("{:5.1}%", ratio * 100.0);
+
+        let is_selected = result_idx == cursor;
+        let (arrow, num_style, ratio_style) = if is_selected {
+            (
+                Span::styled(" ▶ ", Style::default().fg(ACCENT)),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::default().fg(ACCENT),
+            )
+        } else {
+            (
+                Span::raw("   "),
+                Style::default(),
+                Style::default().fg(MUTED),
+            )
+        };
+
+        let line = Line::from(vec![
+            arrow,
+            Span::styled(format!("{:2}. ", result_idx + 1), num_style),
+            Span::styled(format!("조합 {:2}", result_idx + 1), num_style),
+            Span::raw("  "),
+            Span::styled(format!("(배율: {ratio_str})"), ratio_style),
+        ]);
+        f.render_widget(
+            Paragraph::new(line),
+            Rect { x: inner.x, y, width: inner.width, height: 1 },
+        );
+    }
+}
+
+fn render_optimize_detail(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    combo_idx: usize,
+    cursor: usize,
+) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Span::styled(
+            format!(" 조합 {} 상세 ", combo_idx + 1),
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let results = match &app.optimizer_results {
+        Some(r) => r,
+        None => return,
+    };
+    let combo = match results.get(combo_idx) {
+        Some(c) => c,
+        None => return,
+    };
+
+    // Collect and sort items by (opt[0].kind name, opt[1].kind name)
+    let mut items: Vec<&Item> = combo.indices.iter().map(|&i| &app.items[i]).collect();
+    items.sort_by(|a, b| {
+        let ka = (a.options[0].kind.display_name(), a.options[1].kind.display_name());
+        let kb = (b.options[0].kind.display_name(), b.options[1].kind.display_name());
+        ka.cmp(&kb)
+    });
+
+    // Each item = 2 display lines
+    let visible = inner.height as usize / 2;
+    let offset = compute_offset(cursor, 0, visible);
+
+    for (display_idx, item_pos) in (offset..).take(visible).enumerate() {
+        if item_pos >= items.len() {
+            break;
+        }
+        let item = items[item_pos];
+        let row_y = inner.y + (display_idx * 2) as u16;
+        if row_y + 1 >= inner.y + inner.height {
+            break;
+        }
+
+        let is_selected = item_pos == cursor;
+        let (arrow, style) = if is_selected {
+            (
+                Span::styled(" ▶ ", Style::default().fg(ACCENT)),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            )
+        } else {
+            (Span::raw("   "), Style::default())
+        };
+
+        let num_span = Span::styled(format!("{:2}. ", item_pos + 1), style);
+
+        let label0 = format!("{}  ", pad_kind(item.options[0].kind.display_name()));
+        let line0 = Line::from(vec![
+            arrow,
+            num_span,
+            Span::styled(label0, style),
+            Span::styled(item.options[0].value.to_string(), style),
+        ]);
+        f.render_widget(
+            Paragraph::new(line0),
+            Rect { x: inner.x, y: row_y, width: inner.width, height: 1 },
+        );
+
+        let label1 = format!("{}  ", pad_kind(item.options[1].kind.display_name()));
+        let line1 = Line::from(vec![
+            Span::raw("       "),
+            Span::styled(label1, if is_selected { style } else { Style::default().fg(MUTED) }),
+            Span::styled(
+                item.options[1].value.to_string(),
+                if is_selected { style } else { Style::default().fg(MUTED) },
+            ),
+        ]);
+        f.render_widget(
+            Paragraph::new(line1),
+            Rect { x: inner.x, y: row_y + 1, width: inner.width, height: 1 },
+        );
     }
 }

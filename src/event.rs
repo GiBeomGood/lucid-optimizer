@@ -14,6 +14,10 @@ pub fn key_to_action(app: &App, key: KeyEvent) -> Option<Action> {
         Mode::Adding(state) => adding_action(key, state),
         Mode::ConfirmDelete { .. } => confirm_delete_action(key),
         Mode::QuitConfirm => quit_confirm_action(key),
+        Mode::OptimizeInput { .. } => optimize_input_action(key),
+        Mode::Optimizing { .. } => optimize_running_action(key),
+        Mode::OptimizeResult { .. } => optimize_result_action(key),
+        Mode::OptimizeDetail { .. } => optimize_detail_action(key),
     }
 }
 
@@ -130,6 +134,44 @@ fn quit_confirm_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('s') => Some(Action::QuitSave),
         KeyCode::Char('q') => Some(Action::QuitForce),
         KeyCode::Esc => Some(Action::Escape),
+        _ => None,
+    }
+}
+
+fn optimize_input_action(key: KeyEvent) -> Option<Action> {
+    match key.code {
+        KeyCode::Left => Some(Action::Left),
+        KeyCode::Right => Some(Action::Right),
+        KeyCode::Char(c) if c.is_ascii_digit() => Some(Action::InputChar(c)),
+        KeyCode::Backspace => Some(Action::Backspace),
+        KeyCode::Enter => Some(Action::Enter),
+        KeyCode::Esc => Some(Action::Escape),
+        _ => None,
+    }
+}
+
+fn optimize_running_action(key: KeyEvent) -> Option<Action> {
+    match key.code {
+        KeyCode::Esc => Some(Action::Escape),
+        _ => None,
+    }
+}
+
+fn optimize_result_action(key: KeyEvent) -> Option<Action> {
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => Some(Action::Up),
+        KeyCode::Down | KeyCode::Char('j') => Some(Action::Down),
+        KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => Some(Action::Enter),
+        KeyCode::Esc | KeyCode::Char('q') => Some(Action::Escape),
+        _ => None,
+    }
+}
+
+fn optimize_detail_action(key: KeyEvent) -> Option<Action> {
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => Some(Action::Up),
+        KeyCode::Down | KeyCode::Char('j') => Some(Action::Down),
+        KeyCode::Esc | KeyCode::Char('q') => Some(Action::Escape),
         _ => None,
     }
 }

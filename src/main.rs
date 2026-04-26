@@ -11,6 +11,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 mod app;
 mod event;
 mod item;
+mod optimizer;
 mod stats;
 mod storage;
 mod ui;

@@ -1,5 +1,7 @@
 use crate::item::{Item, ItemOption, OptionKind};
+use crate::optimizer::{ComboResult, OptimizeMsg};
 use crate::stats::BaseStats;
+use std::sync::mpsc;
 use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +61,16 @@ pub enum Mode {
     Adding(AddState),
     ConfirmDelete { item_idx: usize },
     QuitConfirm,
+    OptimizeInput {
+        n_buf: String,
+        k_buf: String,
+        focus: u8,
+        n_cursor: usize,
+        k_cursor: usize,
+    },
+    Optimizing { status: String, progress: Option<(usize, usize)> },
+    OptimizeResult { cursor: usize },
+    OptimizeDetail { combo_idx: usize, cursor: usize },
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +108,10 @@ pub struct App {
     pub should_quit: bool,
     pub file_path: String,
     pub stats_path: String,
+    pub optimizer_results: Option<Vec<ComboResult>>,
+    pub optimizer_n: usize,
+    pub optimizer_k: usize,
+    optimizer_rx: Option<mpsc::Receiver<OptimizeMsg>>,
     prev_mode: Option<Mode>,
     undo_stack: Vec<Vec<Item>>,
     redo_stack: Vec<Vec<Item>>,
@@ -115,6 +131,10 @@ impl App {
             should_quit: false,
             file_path,
             stats_path,
+            optimizer_results: None,
+            optimizer_n: 0,
+            optimizer_k: 0,
+            optimizer_rx: None,
             prev_mode: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -130,6 +150,48 @@ impl App {
             && t.elapsed().as_millis() > 1500
         {
             self.flash = None;
+        }
+        self.drain_optimizer();
+    }
+
+    fn drain_optimizer(&mut self) {
+        if let Some(rx) = self.optimizer_rx.take() {
+            let mut finished = false;
+            loop {
+                match rx.try_recv() {
+                    Ok(OptimizeMsg::Status(s)) => {
+                        if let Mode::Optimizing { status, progress } = &mut self.mode {
+                            *status = s;
+                            *progress = None;
+                        }
+                    }
+                    Ok(OptimizeMsg::Progress(done, total)) => {
+                        if let Mode::Optimizing { progress, .. } = &mut self.mode {
+                            *progress = Some((done, total));
+                        }
+                    }
+                    Ok(OptimizeMsg::Done(results)) => {
+                        self.optimizer_results = Some(results);
+                        self.mode = Mode::OptimizeResult { cursor: 0 };
+                        finished = true;
+                        break;
+                    }
+                    Ok(OptimizeMsg::Error(e)) => {
+                        self.flash = Some((format!("오류: {e}"), Instant::now()));
+                        self.mode = Mode::Home { cursor: 2 };
+                        finished = true;
+                        break;
+                    }
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        finished = true;
+                        break;
+                    }
+                }
+            }
+            if !finished {
+                self.optimizer_rx = Some(rx);
+            }
         }
     }
 
@@ -186,6 +248,19 @@ impl App {
                         self.handle_confirm_delete(action, item_idx)
                     }
                     Mode::QuitConfirm => self.handle_quit_confirm(action),
+                    Mode::OptimizeInput { n_buf, k_buf, focus, n_cursor, k_cursor } => {
+                        self.handle_optimize_input(action, n_buf, k_buf, focus, n_cursor, k_cursor)
+                    }
+                    Mode::Optimizing { .. } => {
+                        if let Action::Escape = action {
+                            self.optimizer_rx = None;
+                            self.mode = Mode::Home { cursor: 2 };
+                        }
+                    }
+                    Mode::OptimizeResult { cursor } => self.handle_optimize_result(action, cursor),
+                    Mode::OptimizeDetail { combo_idx, cursor } => {
+                        self.handle_optimize_detail(action, combo_idx, cursor)
+                    }
                 }
             }
         }
@@ -235,14 +310,167 @@ impl App {
                 self.mode = Mode::Home { cursor: cursor.saturating_sub(1) };
             }
             Action::Down => {
-                self.mode = Mode::Home { cursor: (cursor + 1).min(1) };
+                self.mode = Mode::Home { cursor: (cursor + 1).min(2) };
             }
             Action::Enter => {
-                if cursor == 0 {
-                    self.mode = Mode::Stats { cursor: 0 };
-                } else {
-                    self.mode = Mode::List;
+                match cursor {
+                    0 => self.mode = Mode::Stats { cursor: 0 },
+                    1 => self.mode = Mode::List,
+                    _ => {
+                        self.mode = Mode::OptimizeInput {
+                            n_buf: String::new(),
+                            k_buf: String::new(),
+                            focus: 0,
+                            n_cursor: 0,
+                            k_cursor: 0,
+                        };
+                    }
                 }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_optimize_input(
+        &mut self,
+        action: Action,
+        mut n_buf: String,
+        mut k_buf: String,
+        focus: u8,
+        mut n_cursor: usize,
+        mut k_cursor: usize,
+    ) {
+        if focus == 0 {
+            match action {
+                Action::Left => {
+                    n_cursor = n_cursor.saturating_sub(1);
+                    self.mode = Mode::OptimizeInput { n_buf, k_buf, focus, n_cursor, k_cursor };
+                }
+                Action::Right => {
+                    n_cursor = (n_cursor + 1).min(n_buf.len());
+                    self.mode = Mode::OptimizeInput { n_buf, k_buf, focus, n_cursor, k_cursor };
+                }
+                Action::InputChar(c) if c.is_ascii_digit() => {
+                    n_buf.insert(n_cursor, c);
+                    n_cursor += 1;
+                    self.mode = Mode::OptimizeInput { n_buf, k_buf, focus, n_cursor, k_cursor };
+                }
+                Action::Backspace => {
+                    if n_cursor > 0 {
+                        n_buf.remove(n_cursor - 1);
+                        n_cursor -= 1;
+                    }
+                    self.mode = Mode::OptimizeInput { n_buf, k_buf, focus, n_cursor, k_cursor };
+                }
+                Action::Enter if n_buf.parse::<usize>().is_ok_and(|v| v >= 1) => {
+                    k_cursor = k_buf.len();
+                    self.mode = Mode::OptimizeInput { n_buf, k_buf, focus: 1, n_cursor, k_cursor };
+                }
+                Action::Enter => {
+                    self.mode = Mode::OptimizeInput { n_buf, k_buf, focus, n_cursor, k_cursor };
+                }
+                Action::Escape => {
+                    self.mode = Mode::Home { cursor: 2 };
+                }
+                _ => {
+                    self.mode = Mode::OptimizeInput { n_buf, k_buf, focus, n_cursor, k_cursor };
+                }
+            }
+        } else {
+            match action {
+                Action::Left => {
+                    k_cursor = k_cursor.saturating_sub(1);
+                    self.mode = Mode::OptimizeInput { n_buf, k_buf, focus, n_cursor, k_cursor };
+                }
+                Action::Right => {
+                    k_cursor = (k_cursor + 1).min(k_buf.len());
+                    self.mode = Mode::OptimizeInput { n_buf, k_buf, focus, n_cursor, k_cursor };
+                }
+                Action::InputChar(c) if c.is_ascii_digit() => {
+                    k_buf.insert(k_cursor, c);
+                    k_cursor += 1;
+                    self.mode = Mode::OptimizeInput { n_buf, k_buf, focus, n_cursor, k_cursor };
+                }
+                Action::Backspace => {
+                    if k_cursor > 0 {
+                        k_buf.remove(k_cursor - 1);
+                        k_cursor -= 1;
+                    }
+                    self.mode = Mode::OptimizeInput { n_buf, k_buf, focus, n_cursor, k_cursor };
+                }
+                Action::Enter => {
+                    let n = n_buf.parse::<usize>().unwrap_or(0);
+                    let k = k_buf.parse::<usize>().unwrap_or(0);
+                    if n >= 1 && k >= 1 {
+                        self.start_optimization(n, k);
+                    } else {
+                        self.mode = Mode::OptimizeInput { n_buf, k_buf, focus, n_cursor, k_cursor };
+                    }
+                }
+                Action::Escape => {
+                    n_cursor = n_buf.len();
+                    self.mode = Mode::OptimizeInput { n_buf, k_buf, focus: 0, n_cursor, k_cursor };
+                }
+                _ => {
+                    self.mode = Mode::OptimizeInput { n_buf, k_buf, focus, n_cursor, k_cursor };
+                }
+            }
+        }
+    }
+
+    fn start_optimization(&mut self, n: usize, k: usize) {
+        let items = self.items.clone();
+        let base = self.stats.clone();
+        let (tx, rx) = mpsc::channel();
+        self.optimizer_rx = Some(rx);
+        self.optimizer_n = n;
+        self.optimizer_k = k;
+        self.optimizer_results = None;
+        self.mode = Mode::Optimizing { status: "시작 중...".to_string(), progress: None };
+        std::thread::spawn(move || {
+            crate::optimizer::run_optimize(items, base, n, k, tx);
+        });
+    }
+
+    fn handle_optimize_result(&mut self, action: Action, cursor: usize) {
+        let n_results = self.optimizer_results.as_ref().map_or(0, |r| r.len());
+        match action {
+            Action::Up => {
+                self.mode = Mode::OptimizeResult { cursor: cursor.saturating_sub(1) };
+            }
+            Action::Down => {
+                self.mode = Mode::OptimizeResult {
+                    cursor: (cursor + 1).min(n_results.saturating_sub(1)),
+                };
+            }
+            Action::Enter | Action::Right if n_results > 0 && cursor < n_results => {
+                self.mode = Mode::OptimizeDetail { combo_idx: cursor, cursor: 0 };
+            }
+            Action::Escape => {
+                self.mode = Mode::Home { cursor: 2 };
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_optimize_detail(&mut self, action: Action, combo_idx: usize, cursor: usize) {
+        let n_items = self
+            .optimizer_results
+            .as_ref()
+            .and_then(|r| r.get(combo_idx))
+            .map_or(0, |c| c.indices.len());
+        match action {
+            Action::Up => {
+                self.mode = Mode::OptimizeDetail { combo_idx, cursor: cursor.saturating_sub(1) };
+            }
+            Action::Down => {
+                self.mode = Mode::OptimizeDetail {
+                    combo_idx,
+                    cursor: (cursor + 1).min(n_items.saturating_sub(1)),
+                };
+            }
+            Action::Escape => {
+                self.mode = Mode::OptimizeResult { cursor: combo_idx };
             }
             _ => {}
         }
