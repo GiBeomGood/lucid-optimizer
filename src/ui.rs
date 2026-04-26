@@ -5,9 +5,23 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::{AddFocus, AddState, App, Mode};
 use crate::item::OptionKind;
+
+// Terminal display width of the widest option name ("재사용 대기시간 감소" = 20 cols).
+// All kind names and the placeholder are padded to this so the value column stays aligned.
+const KIND_COL_WIDTH: usize = 20;
+
+fn pad_kind(s: &str) -> String {
+    let w = UnicodeWidthStr::width(s);
+    if w >= KIND_COL_WIDTH {
+        s.to_string()
+    } else {
+        format!("{}{}", s, " ".repeat(KIND_COL_WIDTH - w))
+    }
+}
 
 const ACCENT: Color = Color::Rgb(180, 170, 255);
 const ACCENT_DIM: Color = Color::Rgb(120, 115, 180);
@@ -234,31 +248,33 @@ fn render_hint(f: &mut Frame, app: &App, area: Rect) {
             ("←→", "커서"),
             ("Backspace", "삭제"),
             ("Enter", "적용"),
-            ("Esc", "취소"),
+            ("Esc", "뒤로"),
         ]),
-        Mode::Adding(state) => {
-            let step_label = match state.focus {
-                AddFocus::SelectKind1 => "옵션 1 종류 선택",
-                AddFocus::InputValue1 => "옵션 1 값 입력",
-                AddFocus::SelectKind2 => "옵션 2 종류 선택",
-                AddFocus::InputValue2 => "옵션 2 값 입력",
-            };
-            let mut spans = vec![
-                Span::styled("추가 중: ", Style::default().fg(ACCENT)),
-                Span::styled(step_label.to_string(), Style::default().fg(WARN)),
-                Span::raw("  "),
-            ];
-            let extra = match state.focus {
-                AddFocus::SelectKind1 | AddFocus::SelectKind2 => {
-                    hint_line(&[("↑↓", "선택"), ("Enter", "다음"), ("Esc", "취소")])
-                }
-                AddFocus::InputValue1 | AddFocus::InputValue2 => {
-                    hint_line(&[("숫자", "입력"), ("←→", "커서"), ("Enter", "다음"), ("Esc", "취소")])
-                }
-            };
-            spans.extend(extra.spans);
-            Line::from(spans)
-        }
+        Mode::Adding(state) => match state.focus {
+            AddFocus::SelectRow => {
+                let mut spans = vec![
+                    Span::styled("추가 중  ", Style::default().fg(ACCENT)),
+                ];
+                let extra = if state.both_complete() {
+                    hint_line(&[("↑↓", "이동"), ("Enter", "완료"), ("Esc", "취소")])
+                } else {
+                    hint_line(&[("↑↓", "이동"), ("Enter", "옵션 설정"), ("Esc", "취소")])
+                };
+                spans.extend(extra.spans);
+                Line::from(spans)
+            }
+            AddFocus::SelectKind(_) => hint_line(&[
+                ("↑↓", "선택"),
+                ("Enter", "확정"),
+                ("Esc", "뒤로"),
+            ]),
+            AddFocus::InputValue(_) => hint_line(&[
+                ("숫자", "입력"),
+                ("←→", "커서"),
+                ("Enter", "확정"),
+                ("Esc", "뒤로"),
+            ]),
+        },
         Mode::ConfirmDelete { .. } => Line::from(vec![
             Span::styled("한 번 더 ", Style::default().fg(MUTED)),
             Span::styled("d", Style::default().fg(DANGER).add_modifier(Modifier::BOLD)),
@@ -306,10 +322,8 @@ fn hint_line(pairs: &[(&str, &str)]) -> Line<'static> {
 }
 
 fn render_adding_overlay(f: &mut Frame, state: &AddState, area: Rect) {
-    let show_list = matches!(state.focus, AddFocus::SelectKind1 | AddFocus::SelectKind2);
-    // inner: 2 option rows + blank + "선택:" label + 6 kind rows = 9, or just 2 rows
-    let inner_height: u16 = if show_list { 9 } else { 2 };
-    let popup_height = inner_height + 2;
+    // Fixed height: 2 option rows + blank + "선택:" label + 6 kind rows = 10 inner lines
+    let popup_height = 12u16;
     let popup_width = 54u16.min(area.width.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
@@ -332,19 +346,18 @@ fn render_adding_overlay(f: &mut Frame, state: &AddState, area: Rect) {
 
     lines.push(build_add_option_row(state, 1));
     lines.push(build_add_option_row(state, 2));
+    lines.push(Line::from(vec![]));
+
+    let show_list = matches!(state.focus, AddFocus::SelectKind(_));
 
     if show_list {
-        lines.push(Line::from(vec![]));
-        let section_label = if matches!(state.focus, AddFocus::SelectKind1) {
-            "옵션 1 선택:"
-        } else {
-            "옵션 2 선택:"
-        };
+        let row = match state.focus { AddFocus::SelectKind(r) => r, _ => 0 };
+        let section_label = if row == 0 { "옵션 1 선택:" } else { "옵션 2 선택:" };
         lines.push(Line::from(vec![
             Span::styled(format!("  {section_label}"), Style::default().fg(MUTED)),
         ]));
         for (i, kind) in OptionKind::ALL.iter().enumerate() {
-            if i == state.cursor {
+            if i == state.kind_cursor {
                 lines.push(Line::from(vec![
                     Span::styled("   ▶ ", Style::default().fg(ACCENT)),
                     Span::styled(
@@ -359,22 +372,25 @@ fn render_adding_overlay(f: &mut Frame, state: &AddState, area: Rect) {
                 ]));
             }
         }
+    } else {
+        // Keep fixed height by padding with empty lines
+        for _ in 0..7 {
+            lines.push(Line::from(vec![]));
+        }
     }
 
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
 fn build_add_option_row(state: &AddState, opt_num: u8) -> Line<'static> {
-    let is_active = match opt_num {
-        1 => matches!(state.focus, AddFocus::SelectKind1 | AddFocus::InputValue1),
-        2 => matches!(state.focus, AddFocus::SelectKind2 | AddFocus::InputValue2),
-        _ => false,
+    let row = (opt_num - 1) as usize;
+
+    let is_active = match &state.focus {
+        AddFocus::SelectRow => state.row_cursor == row,
+        AddFocus::SelectKind(r) => *r as usize == row,
+        AddFocus::InputValue(r) => *r as usize == row,
     };
-    let is_input = match opt_num {
-        1 => matches!(state.focus, AddFocus::InputValue1),
-        2 => matches!(state.focus, AddFocus::InputValue2),
-        _ => false,
-    };
+    let is_value_inputting = matches!(&state.focus, AddFocus::InputValue(r) if *r as usize == row);
 
     let arrow = if is_active {
         Span::styled(" ▶ ", Style::default().fg(ACCENT))
@@ -382,7 +398,13 @@ fn build_add_option_row(state: &AddState, opt_num: u8) -> Line<'static> {
         Span::raw("   ")
     };
 
-    let label = Span::raw(format!("옵션 {opt_num}: "));
+    let label_style = if is_active {
+        Style::default().fg(ACCENT)
+    } else {
+        Style::default().fg(MUTED)
+    };
+
+    let label = Span::styled(format!("{opt_num}. "), label_style);
 
     let (kind, buf) = match opt_num {
         1 => (&state.kind1, state.value1.as_str()),
@@ -391,18 +413,22 @@ fn build_add_option_row(state: &AddState, opt_num: u8) -> Line<'static> {
     };
 
     let kind_span = match kind {
-        Some(k) => Span::styled(k.display_name().to_string(), Style::default().fg(ACCENT)),
-        None => Span::styled("[미선택]", Style::default().fg(MUTED)),
+        Some(k) => Span::styled(pad_kind(k.display_name()), if is_active {
+            Style::default().fg(ACCENT)
+        } else {
+            Style::default()
+        }),
+        None => Span::styled(pad_kind("<옵션 선택>"), Style::default().fg(MUTED)),
     };
 
-    let mut spans = vec![arrow, label, kind_span, Span::raw("  ")];
+    let mut spans = vec![arrow, label, kind_span, Span::raw("    ")];
 
-    if is_input {
-        spans.extend(cursor_spans(buf, state.cursor));
+    if is_value_inputting {
+        spans.extend(cursor_spans(buf, state.val_cursor));
     } else if kind.is_some() && !buf.is_empty() {
         spans.push(Span::raw(buf.to_string()));
-    } else if kind.is_some() {
-        spans.push(Span::styled("<값>", Style::default().fg(MUTED)));
+    } else {
+        spans.push(Span::styled("<값 입력>", Style::default().fg(MUTED)));
     }
 
     Line::from(spans)

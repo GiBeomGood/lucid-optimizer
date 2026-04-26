@@ -3,10 +3,9 @@ use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AddFocus {
-    SelectKind1,
-    InputValue1,
-    SelectKind2,
-    InputValue2,
+    SelectRow,
+    SelectKind(u8),
+    InputValue(u8),
 }
 
 #[derive(Debug, Clone)]
@@ -16,7 +15,9 @@ pub struct AddState {
     pub kind2: Option<OptionKind>,
     pub value2: String,
     pub focus: AddFocus,
-    pub cursor: usize,
+    pub row_cursor: usize,
+    pub kind_cursor: usize,
+    pub val_cursor: usize,
 }
 
 impl AddState {
@@ -26,9 +27,20 @@ impl AddState {
             value1: String::new(),
             kind2: None,
             value2: String::new(),
-            focus: AddFocus::SelectKind1,
-            cursor: 0,
+            focus: AddFocus::SelectRow,
+            row_cursor: 0,
+            kind_cursor: 0,
+            val_cursor: 0,
         }
+    }
+
+    pub fn both_complete(&self) -> bool {
+        self.kind1.is_some()
+            && self.value1.parse::<i32>().is_ok()
+            && !self.value1.is_empty()
+            && self.kind2.is_some()
+            && self.value2.parse::<i32>().is_ok()
+            && !self.value2.is_empty()
     }
 }
 
@@ -282,128 +294,127 @@ impl App {
     }
 
     fn handle_adding(&mut self, action: Action, mut state: AddState) {
-        match state.focus {
-            AddFocus::SelectKind1 => match action {
+        let focus = state.focus.clone();
+        match focus {
+            AddFocus::SelectRow => match action {
                 Action::Up => {
-                    state.cursor = state.cursor.saturating_sub(1);
+                    state.row_cursor = state.row_cursor.saturating_sub(1);
                     self.mode = Mode::Adding(state);
                 }
                 Action::Down => {
-                    state.cursor = (state.cursor + 1).min(OptionKind::ALL.len() - 1);
+                    state.row_cursor = (state.row_cursor + 1).min(1);
                     self.mode = Mode::Adding(state);
                 }
                 Action::Enter => {
-                    state.kind1 = Some(OptionKind::ALL[state.cursor]);
-                    state.focus = AddFocus::InputValue1;
-                    state.cursor = 0;
-                    self.mode = Mode::Adding(state);
-                }
-                Action::Escape => {
-                    self.mode = Mode::List;
-                }
-                _ => {}
-            },
-            AddFocus::InputValue1 => match action {
-                Action::Left => {
-                    state.cursor = state.cursor.saturating_sub(1);
-                    self.mode = Mode::Adding(state);
-                }
-                Action::Right => {
-                    state.cursor = (state.cursor + 1).min(state.value1.len());
-                    self.mode = Mode::Adding(state);
-                }
-                Action::InputChar(c) => {
-                    if (c == '-' && state.cursor == 0 && !state.value1.starts_with('-'))
-                        || c.is_ascii_digit()
-                    {
-                        state.value1.insert(state.cursor, c);
-                        state.cursor += 1;
-                    }
-                    self.mode = Mode::Adding(state);
-                }
-                Action::Backspace => {
-                    if state.cursor > 0 {
-                        state.value1.remove(state.cursor - 1);
-                        state.cursor -= 1;
-                    }
-                    self.mode = Mode::Adding(state);
-                }
-                Action::Enter if state.value1.parse::<i32>().is_ok() => {
-                    state.focus = AddFocus::SelectKind2;
-                    state.cursor = 0;
-                    self.mode = Mode::Adding(state);
-                }
-                Action::Escape => {
-                    self.mode = Mode::List;
-                }
-                _ => {}
-            },
-            AddFocus::SelectKind2 => match action {
-                Action::Up => {
-                    state.cursor = state.cursor.saturating_sub(1);
-                    self.mode = Mode::Adding(state);
-                }
-                Action::Down => {
-                    state.cursor = (state.cursor + 1).min(OptionKind::ALL.len() - 1);
-                    self.mode = Mode::Adding(state);
-                }
-                Action::Enter => {
-                    state.kind2 = Some(OptionKind::ALL[state.cursor]);
-                    state.focus = AddFocus::InputValue2;
-                    state.cursor = 0;
-                    self.mode = Mode::Adding(state);
-                }
-                Action::Escape => {
-                    self.mode = Mode::List;
-                }
-                _ => {}
-            },
-            AddFocus::InputValue2 => match action {
-                Action::Left => {
-                    state.cursor = state.cursor.saturating_sub(1);
-                    self.mode = Mode::Adding(state);
-                }
-                Action::Right => {
-                    state.cursor = (state.cursor + 1).min(state.value2.len());
-                    self.mode = Mode::Adding(state);
-                }
-                Action::InputChar(c) => {
-                    if (c == '-' && state.cursor == 0 && !state.value2.starts_with('-'))
-                        || c.is_ascii_digit()
-                    {
-                        state.value2.insert(state.cursor, c);
-                        state.cursor += 1;
-                    }
-                    self.mode = Mode::Adding(state);
-                }
-                Action::Backspace => {
-                    if state.cursor > 0 {
-                        state.value2.remove(state.cursor - 1);
-                        state.cursor -= 1;
-                    }
-                    self.mode = Mode::Adding(state);
-                }
-                Action::Enter => {
-                    if let (Some(kind1), Ok(value1), Some(kind2), Ok(value2)) = (
-                        state.kind1,
-                        state.value1.parse::<i32>(),
-                        state.kind2,
-                        state.value2.parse::<i32>(),
-                    ) {
+                    if state.both_complete() {
                         self.push_undo();
                         self.items.push(Item {
                             options: [
-                                ItemOption { kind: kind1, value: value1 },
-                                ItemOption { kind: kind2, value: value2 },
+                                ItemOption {
+                                    kind: state.kind1.unwrap(),
+                                    value: state.value1.parse().unwrap(),
+                                },
+                                ItemOption {
+                                    kind: state.kind2.unwrap(),
+                                    value: state.value2.parse().unwrap(),
+                                },
                             ],
                         });
                         self.selected = self.items.len() - 1;
                         self.dirty = true;
                         self.mode = Mode::List;
+                    } else {
+                        let kind_idx = if state.row_cursor == 0 {
+                            state.kind1.and_then(|k| OptionKind::ALL.iter().position(|&x| x == k)).unwrap_or(0)
+                        } else {
+                            state.kind2.and_then(|k| OptionKind::ALL.iter().position(|&x| x == k)).unwrap_or(0)
+                        };
+                        state.kind_cursor = kind_idx;
+                        state.focus = AddFocus::SelectKind(state.row_cursor as u8);
+                        self.mode = Mode::Adding(state);
                     }
                 }
                 Action::Escape => {
                     self.mode = Mode::List;
+                }
+                _ => {}
+            },
+            AddFocus::SelectKind(row) => match action {
+                Action::Up => {
+                    state.kind_cursor = state.kind_cursor.saturating_sub(1);
+                    self.mode = Mode::Adding(state);
+                }
+                Action::Down => {
+                    state.kind_cursor = (state.kind_cursor + 1).min(OptionKind::ALL.len() - 1);
+                    self.mode = Mode::Adding(state);
+                }
+                Action::Enter => {
+                    let kind = OptionKind::ALL[state.kind_cursor];
+                    let val_cursor = if row == 0 {
+                        state.kind1 = Some(kind);
+                        state.value1.len()
+                    } else {
+                        state.kind2 = Some(kind);
+                        state.value2.len()
+                    };
+                    state.val_cursor = val_cursor;
+                    state.focus = AddFocus::InputValue(row);
+                    self.mode = Mode::Adding(state);
+                }
+                Action::Escape => {
+                    state.focus = AddFocus::SelectRow;
+                    self.mode = Mode::Adding(state);
+                }
+                _ => {}
+            },
+            AddFocus::InputValue(row) => match action {
+                Action::Left => {
+                    state.val_cursor = state.val_cursor.saturating_sub(1);
+                    self.mode = Mode::Adding(state);
+                }
+                Action::Right => {
+                    let len = if row == 0 { state.value1.len() } else { state.value2.len() };
+                    state.val_cursor = (state.val_cursor + 1).min(len);
+                    self.mode = Mode::Adding(state);
+                }
+                Action::InputChar(c) => {
+                    let val = if row == 0 { &mut state.value1 } else { &mut state.value2 };
+                    if (c == '-' && state.val_cursor == 0 && !val.starts_with('-'))
+                        || c.is_ascii_digit()
+                    {
+                        val.insert(state.val_cursor, c);
+                        state.val_cursor += 1;
+                    }
+                    self.mode = Mode::Adding(state);
+                }
+                Action::Backspace => {
+                    if state.val_cursor > 0 {
+                        let val = if row == 0 { &mut state.value1 } else { &mut state.value2 };
+                        val.remove(state.val_cursor - 1);
+                        state.val_cursor -= 1;
+                    }
+                    self.mode = Mode::Adding(state);
+                }
+                Action::Enter => {
+                    let valid = if row == 0 {
+                        !state.value1.is_empty() && state.value1.parse::<i32>().is_ok()
+                    } else {
+                        !state.value2.is_empty() && state.value2.parse::<i32>().is_ok()
+                    };
+                    if valid {
+                        state.focus = AddFocus::SelectRow;
+                        self.mode = Mode::Adding(state);
+                    }
+                }
+                Action::Escape => {
+                    let kind_idx = if row == 0 {
+                        state.kind1.and_then(|k| OptionKind::ALL.iter().position(|&x| x == k)).unwrap_or(0)
+                    } else {
+                        state.kind2.and_then(|k| OptionKind::ALL.iter().position(|&x| x == k)).unwrap_or(0)
+                    };
+                    state.kind_cursor = kind_idx;
+                    state.focus = AddFocus::SelectKind(row);
+                    self.mode = Mode::Adding(state);
                 }
                 _ => {}
             },
@@ -543,16 +554,23 @@ mod tests {
         let mut app = make_app();
         let before = app.items.len();
         app.apply(Action::AddItem);
-        // SelectKind1: choose index 0 (Magic)
+        // SelectRow, row_cursor=0 → Enter → SelectKind(0)
         app.apply(Action::Enter);
-        // InputValue1: type "5"
+        // SelectKind(0): cursor=0 (Magic) → Enter → InputValue(0)
+        app.apply(Action::Enter);
+        // InputValue(0): type "5" → Enter → SelectRow
         app.apply(Action::InputChar('5'));
         app.apply(Action::Enter);
-        // SelectKind2: choose index 1 (MagicPercent)
+        // SelectRow, row_cursor=0 → Down → row_cursor=1 → Enter → SelectKind(1)
         app.apply(Action::Down);
         app.apply(Action::Enter);
-        // InputValue2: type "3"
+        // SelectKind(1): Down → cursor=1 (MagicPercent) → Enter → InputValue(1)
+        app.apply(Action::Down);
+        app.apply(Action::Enter);
+        // InputValue(1): type "3" → Enter → SelectRow
         app.apply(Action::InputChar('3'));
+        app.apply(Action::Enter);
+        // SelectRow, both complete → Enter → List + item added
         app.apply(Action::Enter);
         assert_eq!(app.items.len(), before + 1);
         assert!(app.dirty);
@@ -568,11 +586,25 @@ mod tests {
     fn adding_escape_cancels_without_change() {
         let mut app = make_app();
         let before = app.items.clone();
-        app.apply(Action::AddItem);
-        app.apply(Action::Enter);
-        app.apply(Action::InputChar('5'));
-        app.apply(Action::Escape);
+        app.apply(Action::AddItem); // SelectRow
+        app.apply(Action::Escape); // → List
         assert_eq!(app.items, before);
+        assert!(matches!(app.mode, Mode::List));
+    }
+
+    #[test]
+    fn adding_esc_navigates_back() {
+        let mut app = make_app();
+        app.apply(Action::AddItem);            // SelectRow
+        app.apply(Action::Enter);              // SelectKind(0)
+        assert!(matches!(app.mode, Mode::Adding(ref s) if matches!(s.focus, AddFocus::SelectKind(0))));
+        app.apply(Action::Enter);              // InputValue(0)
+        assert!(matches!(app.mode, Mode::Adding(ref s) if matches!(s.focus, AddFocus::InputValue(0))));
+        app.apply(Action::Escape);             // back to SelectKind(0)
+        assert!(matches!(app.mode, Mode::Adding(ref s) if matches!(s.focus, AddFocus::SelectKind(0))));
+        app.apply(Action::Escape);             // back to SelectRow
+        assert!(matches!(app.mode, Mode::Adding(ref s) if matches!(s.focus, AddFocus::SelectRow)));
+        app.apply(Action::Escape);             // back to List
         assert!(matches!(app.mode, Mode::List));
     }
 

@@ -53,7 +53,7 @@ fn value_input_action(key: KeyEvent) -> Option<Action> {
 }
 
 fn adding_action(key: KeyEvent, state: &AddState) -> Option<Action> {
-    let is_input_focus = matches!(state.focus, AddFocus::InputValue1 | AddFocus::InputValue2);
+    let is_input_focus = matches!(state.focus, AddFocus::InputValue(_));
 
     if is_input_focus {
         return match key.code {
