@@ -30,7 +30,7 @@ const MUTED: Color = Color::DarkGray;
 const WARN: Color = Color::Yellow;
 const DANGER: Color = Color::Red;
 
-pub fn render(f: &mut Frame, app: &App) {
+pub fn render(f: &mut Frame, app: &mut App) {
     let area = f.area();
 
     let chunks = Layout::default()
@@ -65,7 +65,7 @@ pub fn render(f: &mut Frame, app: &App) {
     }
 }
 
-fn render_main(f: &mut Frame, app: &App, area: Rect) {
+fn render_main(f: &mut Frame, app: &mut App, area: Rect) {
     let dirty_indicator = if app.dirty {
         Span::styled("● 저장 안 됨", Style::default().fg(WARN))
     } else {
@@ -114,6 +114,7 @@ fn render_main(f: &mut Frame, app: &App, area: Rect) {
     // Each item occupies 2 lines
     let visible = inner.height as usize / 2;
     let offset = compute_offset(app.selected, app.scroll_offset, visible);
+    app.scroll_offset = offset;
 
     for (display_idx, item_idx) in (offset..).take(visible).enumerate() {
         if item_idx >= app.items.len() {

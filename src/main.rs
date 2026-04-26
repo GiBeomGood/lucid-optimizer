@@ -39,7 +39,7 @@ fn main() -> io::Result<()> {
     }));
 
     loop {
-        terminal.draw(|f| ui::render(f, &app))?;
+        terminal.draw(|f| ui::render(f, &mut app))?;
 
         if ct_event::poll(Duration::from_millis(100))?
             && let Event::Key(key) = ct_event::read()?
