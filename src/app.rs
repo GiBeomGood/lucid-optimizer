@@ -197,7 +197,7 @@ impl App {
     }
 
     fn do_save(&mut self) {
-        match crate::storage::save(&self.file_path.clone(), &self.items) {
+        match crate::storage::save(&self.file_path, &self.items) {
             Ok(_) => {
                 self.dirty = false;
                 self.flash = Some(("✓ 저장됨".to_string(), Instant::now()));
@@ -209,7 +209,7 @@ impl App {
     }
 
     fn do_save_stats(&mut self) {
-        match crate::storage::save_stats(&self.stats_path.clone(), &self.stats) {
+        match crate::storage::save_stats(&self.stats_path, &self.stats) {
             Ok(_) => {
                 self.stats_dirty = false;
                 self.flash = Some(("✓ 저장됨".to_string(), Instant::now()));
@@ -365,10 +365,7 @@ impl App {
                 self.mode = Mode::Edit { item_idx, option_idx: (option_idx + 1).min(1) };
             }
             Action::EditKind => {
-                let kind_cursor = OptionKind::ALL
-                    .iter()
-                    .position(|&k| k == self.items[item_idx].options[option_idx].kind)
-                    .unwrap_or(0);
+                let kind_cursor = self.items[item_idx].options[option_idx].kind.index_in_all();
                 self.mode = Mode::EditKind { item_idx, option_idx, kind_cursor };
             }
             Action::Enter | Action::EditValue => {
@@ -448,12 +445,12 @@ impl App {
                 self.mode = Mode::EditValue { item_idx, option_idx, buffer, cursor };
             }
             Action::Enter => {
-                if let Ok(val) = buffer.parse::<i32>() {
-                    if val != self.items[item_idx].options[option_idx].value {
-                        self.push_undo();
-                        self.items[item_idx].options[option_idx].value = val;
-                        self.dirty = true;
-                    }
+                if let Ok(val) = buffer.parse::<i32>()
+                    && val != self.items[item_idx].options[option_idx].value
+                {
+                    self.push_undo();
+                    self.items[item_idx].options[option_idx].value = val;
+                    self.dirty = true;
                 }
                 self.mode = Mode::Edit { item_idx, option_idx };
             }
@@ -478,11 +475,8 @@ impl App {
                 }
                 Action::EditKind => {
                     let row = state.row_cursor as u8;
-                    state.kind_cursor = if row == 0 {
-                        state.kind1.and_then(|k| OptionKind::ALL.iter().position(|&x| x == k)).unwrap_or(0)
-                    } else {
-                        state.kind2.and_then(|k| OptionKind::ALL.iter().position(|&x| x == k)).unwrap_or(0)
-                    };
+                    let row_kind = if row == 0 { state.kind1 } else { state.kind2 };
+                    state.kind_cursor = row_kind.map_or(0, OptionKind::index_in_all);
                     state.focus = AddFocus::SelectKind(row);
                     self.mode = Mode::Adding(state);
                 }
@@ -491,8 +485,8 @@ impl App {
                     let has_kind = if row == 0 { state.kind1.is_some() } else { state.kind2.is_some() };
                     if has_kind {
                         let val = if row == 0 { state.value1.clone() } else { state.value2.clone() };
-                        state.val_draft = val.clone();
                         state.val_cursor = val.len();
+                        state.val_draft = val;
                         state.focus = AddFocus::InputValue(row);
                     }
                     self.mode = Mode::Adding(state);
@@ -580,19 +574,15 @@ impl App {
                     if valid {
                         if row == 0 { state.value1 = state.val_draft.clone(); } else { state.value2 = state.val_draft.clone(); }
                         let other = 1 - row;
-                        let other_has_kind = if other == 0 { state.kind1.is_some() } else { state.kind2.is_some() };
+                        let other_kind = if other == 0 { state.kind1 } else { state.kind2 };
                         let other_val = if other == 0 { &state.value1 } else { &state.value2 };
                         let other_has_value = !other_val.is_empty() && other_val.parse::<i32>().is_ok();
-                        if !other_has_kind {
-                            state.kind_cursor = if other == 0 {
-                                state.kind1.and_then(|k| OptionKind::ALL.iter().position(|&x| x == k)).unwrap_or(0)
-                            } else {
-                                state.kind2.and_then(|k| OptionKind::ALL.iter().position(|&x| x == k)).unwrap_or(0)
-                            };
+                        if other_kind.is_none() {
+                            state.kind_cursor = other_kind.map_or(0, OptionKind::index_in_all);
                             state.row_cursor = other as usize;
                             state.focus = AddFocus::SelectKind(other);
                         } else if !other_has_value {
-                            state.val_draft = String::new();
+                            state.val_draft.clear();
                             state.val_cursor = 0;
                             state.row_cursor = other as usize;
                             state.focus = AddFocus::InputValue(other);
@@ -600,10 +590,8 @@ impl App {
                             state.row_cursor = row as usize;
                             state.focus = AddFocus::SelectRow;
                         }
-                        self.mode = Mode::Adding(state);
-                    } else {
-                        self.mode = Mode::Adding(state);
                     }
+                    self.mode = Mode::Adding(state);
                 }
                 Action::Escape => {
                     state.row_cursor = row as usize;

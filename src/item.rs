@@ -34,6 +34,10 @@ impl OptionKind {
         }
     }
 
+    pub fn index_in_all(self) -> usize {
+        Self::ALL.iter().position(|&k| k == self).unwrap_or(0)
+    }
+
     pub fn from_korean(s: &str) -> Option<Self> {
         match s {
             "마력" => Some(OptionKind::Magic),
