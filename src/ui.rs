@@ -884,7 +884,7 @@ fn render_optimize_result(f: &mut Frame, app: &App, area: Rect, cursor: usize) {
         return;
     }
 
-    let min_strength = results.last().map(|r| r.strength).unwrap_or(1.0);
+    let min_strength = results.last().map(|r| r.strength).unwrap_or(1);
     let visible = inner.height as usize;
     let offset = compute_offset(cursor, 0, visible);
 
@@ -897,7 +897,7 @@ fn render_optimize_result(f: &mut Frame, app: &App, area: Rect, cursor: usize) {
             break;
         }
         let combo = &results[result_idx];
-        let ratio = if min_strength == 0.0 { 1.0 } else { combo.strength / min_strength };
+        let ratio = if min_strength == 0 { 1.0 } else { combo.strength as f64 / min_strength as f64 };
         let ratio_str = format!("{:5.1}%", ratio * 100.0);
 
         let is_selected = result_idx == cursor;

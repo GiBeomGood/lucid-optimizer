@@ -9,7 +9,7 @@ const COOL_REDUCE_STRENGTH: [f64; 10] =
 #[derive(Debug, Clone)]
 pub struct ComboResult {
     pub indices: Vec<usize>,
-    pub strength: f64,
+    pub strength: i64,
 }
 
 pub enum OptimizeMsg {
@@ -19,9 +19,9 @@ pub enum OptimizeMsg {
     Error(String),
 }
 
-pub fn calculate_strength(base: &BaseStats, combo_items: &[&Item]) -> f64 {
+pub fn calculate_strength(base: &BaseStats, combo_items: &[&Item]) -> i64 {
     let mut magic = base.effective_magic();
-    let mut magic_percent = 0i32;
+    let mut magic_percent = base.magic_percent;
     let mut crit_damage = base.crit_damage;
     let mut cool_reduce = base.cooldown_reduction;
     let mut mastery = base.mastery;
@@ -40,11 +40,12 @@ pub fn calculate_strength(base: &BaseStats, combo_items: &[&Item]) -> f64 {
     }
 
     let cool_idx = cool_reduce.clamp(0, 9) as usize;
-    (magic as f64)
+    ((magic as f64)
         * (1.0 + magic_percent as f64 / 100.0)
         * (crit_damage as f64 / 100.0)
         * (1.0 + mastery.min(100) as f64 / 600.0)
-        * (1.0 + COOL_REDUCE_STRENGTH[cool_idx] / 100.0)
+        * (1.0 + COOL_REDUCE_STRENGTH[cool_idx] / 100.0))
+        .round() as i64
 }
 
 fn total_crit_rate(base: &BaseStats, combo_items: &[&Item]) -> i32 {
@@ -127,9 +128,7 @@ pub fn run_optimize(
         "유효한 조합 {valid_count}개에서 top-{k} 탐색 중..."
     )));
 
-    results.sort_by(|a, b| {
-        b.strength.partial_cmp(&a.strength).unwrap_or(std::cmp::Ordering::Equal)
-    });
+    results.sort_by(|a, b| b.strength.cmp(&a.strength));
 
     let top_k: Vec<ComboResult> = if k == 0 || k >= results.len() {
         results

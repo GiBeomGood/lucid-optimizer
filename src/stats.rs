@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-pub const FIELD_NAMES: [&str; 7] = [
+pub const FIELD_NAMES: [&str; 8] = [
     "마력(기본 수치, 기본)",
     "마력(기본 수치, 장비 아이템)",
     "마력(몽환의 결정)",
+    "마력%",
     "크리티컬 확률",
     "크리티컬 데미지",
     "재사용 대기시간 감소",
@@ -19,6 +20,8 @@ pub struct BaseStats {
     /// 현재 장착 중인 몽환의 결정에 의한 마력 합계 (최적화 시 기저값에서 제외)
     #[serde(rename = "마력(몽환의 결정)")]
     pub magic_crystal: i32,
+    #[serde(rename = "마력%")]
+    pub magic_percent: i32,
     #[serde(rename = "크리티컬 확률")]
     pub crit_rate: i32,
     #[serde(rename = "크리티컬 데미지")]
@@ -40,10 +43,11 @@ impl BaseStats {
             0 => self.magic_base,
             1 => self.magic_equip,
             2 => self.magic_crystal,
-            3 => self.crit_rate,
-            4 => self.crit_damage,
-            5 => self.cooldown_reduction,
-            6 => self.mastery,
+            3 => self.magic_percent,
+            4 => self.crit_rate,
+            5 => self.crit_damage,
+            6 => self.cooldown_reduction,
+            7 => self.mastery,
             _ => 0,
         }
     }
@@ -53,10 +57,11 @@ impl BaseStats {
             0 => self.magic_base = val,
             1 => self.magic_equip = val,
             2 => self.magic_crystal = val,
-            3 => self.crit_rate = val,
-            4 => self.crit_damage = val,
-            5 => self.cooldown_reduction = val,
-            6 => self.mastery = val,
+            3 => self.magic_percent = val,
+            4 => self.crit_rate = val,
+            5 => self.crit_damage = val,
+            6 => self.cooldown_reduction = val,
+            7 => self.mastery = val,
             _ => {}
         }
     }
@@ -69,10 +74,10 @@ mod tests {
     #[test]
     fn get_set_roundtrip() {
         let mut s = BaseStats::default();
-        for i in 0..5 {
+        for i in 0..8 {
             s.set(i, (i as i32 + 1) * 10);
         }
-        for i in 0..5 {
+        for i in 0..8 {
             assert_eq!(s.get(i), (i as i32 + 1) * 10);
         }
     }
@@ -83,6 +88,7 @@ mod tests {
             magic_base: 1000,
             magic_equip: 500,
             magic_crystal: 100,
+            magic_percent: 0,
             crit_rate: 50,
             crit_damage: 150,
             cooldown_reduction: 3,
