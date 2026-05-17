@@ -6,3 +6,6 @@ stats.json
 **/*.local.json
 **/*temp*
 .release_temp_notes.md
+backends
+documents
+**/*.json.bak

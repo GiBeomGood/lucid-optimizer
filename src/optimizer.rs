@@ -20,7 +20,7 @@ pub enum OptimizeMsg {
 }
 
 pub fn calculate_strength(base: &BaseStats, combo_items: &[&Item]) -> f64 {
-    let mut magic = base.magic;
+    let mut magic = base.effective_magic();
     let mut magic_percent = 0i32;
     let mut crit_damage = base.crit_damage;
     let mut cool_reduce = base.cooldown_reduction;
