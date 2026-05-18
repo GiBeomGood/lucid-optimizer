@@ -162,7 +162,8 @@ fn optimize_result_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Up | KeyCode::Char('k') => Some(Action::Up),
         KeyCode::Down | KeyCode::Char('j') => Some(Action::Down),
         KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => Some(Action::Enter),
-        KeyCode::Esc | KeyCode::Char('q') => Some(Action::Escape),
+        KeyCode::Esc => Some(Action::Escape),
+        KeyCode::Char('q') => Some(Action::Quit),
         _ => None,
     }
 }
@@ -171,7 +172,8 @@ fn optimize_detail_action(key: KeyEvent) -> Option<Action> {
     match key.code {
         KeyCode::Up | KeyCode::Char('k') => Some(Action::Up),
         KeyCode::Down | KeyCode::Char('j') => Some(Action::Down),
-        KeyCode::Esc | KeyCode::Char('q') => Some(Action::Escape),
+        KeyCode::Esc => Some(Action::Escape),
+        KeyCode::Char('q') => Some(Action::Quit),
         _ => None,
     }
 }

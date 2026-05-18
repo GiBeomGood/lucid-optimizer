@@ -15,6 +15,9 @@ use crate::stats::FIELD_NAMES;
 // All kind names and the placeholder are padded to this so the value column stays aligned.
 const KIND_COL_WIDTH: usize = 20;
 
+// Terminal display width of the widest stats label ("마력(기본 수치, 장비 아이템)" = 28 cols).
+const STATS_LABEL_COL_WIDTH: usize = 28;
+
 fn pad_kind(s: &str) -> String {
     let w = UnicodeWidthStr::width(s);
     if w >= KIND_COL_WIDTH {
@@ -47,18 +50,27 @@ pub fn render(f: &mut Frame, app: &mut App) {
         return;
     }
 
-    match &app.mode {
-        Mode::Home { cursor } => render_home(f, app, chunks[0], *cursor),
-        Mode::Stats { cursor } => render_stats(f, app, chunks[0], *cursor),
+    if matches!(&app.mode, Mode::OptimizeInput { .. }) {
+        f.render_widget(Clear, chunks[0]);
+        if let Mode::OptimizeInput { n_buf, k_buf, focus, n_cursor, k_cursor } = &app.mode {
+            render_optimize_input_overlay(f, app, n_buf, k_buf, *focus, *n_cursor, *k_cursor, area);
+        }
+        render_hint(f, app, chunks[1]);
+        return;
+    }
+
+    match app.mode.clone() {
+        Mode::Home { cursor } => render_home(f, app, chunks[0], cursor),
+        Mode::Stats { cursor } => render_stats(f, app, chunks[0], cursor),
         Mode::EditStatValue { field_idx, buffer, cursor } => {
-            render_stats_editing(f, app, chunks[0], *field_idx, buffer, *cursor)
+            render_stats_editing(f, app, chunks[0], field_idx, &buffer, cursor)
         }
         Mode::Optimizing { status, progress } => {
-            render_optimizing(f, chunks[0], status, *progress)
+            render_optimizing(f, chunks[0], &status, progress)
         }
-        Mode::OptimizeResult { cursor } => render_optimize_result(f, app, chunks[0], *cursor),
+        Mode::OptimizeResult { cursor } => render_optimize_result(f, app, chunks[0], cursor),
         Mode::OptimizeDetail { combo_idx, cursor } => {
-            render_optimize_detail(f, app, chunks[0], *combo_idx, *cursor)
+            render_optimize_detail(f, app, chunks[0], combo_idx, cursor)
         }
         _ => render_main(f, app, chunks[0]),
     }
@@ -69,9 +81,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
     }
     if let Mode::EditKind { option_idx, kind_cursor, .. } = &app.mode {
         render_edit_kind_overlay(f, *option_idx, *kind_cursor, area);
-    }
-    if let Mode::OptimizeInput { n_buf, k_buf, focus, n_cursor, k_cursor } = &app.mode {
-        render_optimize_input_overlay(f, app, n_buf, k_buf, *focus, *n_cursor, *k_cursor, area);
     }
 }
 
@@ -369,11 +378,13 @@ fn render_hint(f: &mut Frame, app: &App, area: Rect) {
         Mode::OptimizeResult { .. } => hint_line(&[
             ("↑↓", "이동"),
             ("Enter", "상세 보기"),
-            ("q / Esc", "뒤로"),
+            ("Esc", "뒤로"),
+            ("q", "종료"),
         ]),
         Mode::OptimizeDetail { .. } => hint_line(&[
             ("↑↓", "이동"),
-            ("q / Esc", "뒤로"),
+            ("Esc", "뒤로"),
+            ("q", "종료"),
         ]),
     };
     f.render_widget(Paragraph::new(line), area);
@@ -596,7 +607,8 @@ fn render_stats_inner(
             Span::raw("   ")
         };
 
-        let label = format!("{}: ", pad_kind(name));
+        let w = UnicodeWidthStr::width(*name);
+        let label = format!("{}{}: ", name, " ".repeat(STATS_LABEL_COL_WIDTH.saturating_sub(w)));
         let label_style = if is_cursor {
             Style::default().fg(ACCENT)
         } else {
@@ -850,7 +862,7 @@ fn render_optimizing(
     }
 }
 
-fn render_optimize_result(f: &mut Frame, app: &App, area: Rect, cursor: usize) {
+fn render_optimize_result(f: &mut Frame, app: &mut App, area: Rect, cursor: usize) {
     let n = app.optimizer_n;
     let k = app.optimizer_k;
     let block = Block::default()
@@ -886,7 +898,8 @@ fn render_optimize_result(f: &mut Frame, app: &App, area: Rect, cursor: usize) {
 
     let min_strength = results.last().map(|r| r.strength).unwrap_or(1);
     let visible = inner.height as usize;
-    let offset = compute_offset(cursor, 0, visible);
+    let offset = compute_offset(cursor, app.optimizer_result_scroll, visible);
+    app.optimizer_result_scroll = offset;
 
     for (display_idx, result_idx) in (offset..).take(visible).enumerate() {
         if result_idx >= results.len() {
@@ -931,7 +944,7 @@ fn render_optimize_result(f: &mut Frame, app: &App, area: Rect, cursor: usize) {
 
 fn render_optimize_detail(
     f: &mut Frame,
-    app: &App,
+    app: &mut App,
     area: Rect,
     combo_idx: usize,
     cursor: usize,
@@ -966,7 +979,8 @@ fn render_optimize_detail(
 
     // Each item = 2 display lines
     let visible = inner.height as usize / 2;
-    let offset = compute_offset(cursor, 0, visible);
+    let offset = compute_offset(cursor, app.optimizer_detail_scroll, visible);
+    app.optimizer_detail_scroll = offset;
 
     for (display_idx, item_pos) in (offset..).take(visible).enumerate() {
         if item_pos >= items.len() {
@@ -1005,10 +1019,10 @@ fn render_optimize_detail(
         let label1 = format!("{}  ", pad_kind(item.options[1].kind.display_name()));
         let line1 = Line::from(vec![
             Span::raw("       "),
-            Span::styled(label1, if is_selected { style } else { Style::default().fg(MUTED) }),
+            Span::styled(label1, if is_selected { style } else { Style::default() }),
             Span::styled(
                 item.options[1].value.to_string(),
-                if is_selected { style } else { Style::default().fg(MUTED) },
+                if is_selected { style } else { Style::default() },
             ),
         ]);
         f.render_widget(

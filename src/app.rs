@@ -111,6 +111,8 @@ pub struct App {
     pub optimizer_results: Option<Vec<ComboResult>>,
     pub optimizer_n: usize,
     pub optimizer_k: usize,
+    pub optimizer_result_scroll: usize,
+    pub optimizer_detail_scroll: usize,
     optimizer_rx: Option<mpsc::Receiver<OptimizeMsg>>,
     prev_mode: Option<Mode>,
     undo_stack: Vec<Vec<Item>>,
@@ -134,6 +136,8 @@ impl App {
             optimizer_results: None,
             optimizer_n: 0,
             optimizer_k: 0,
+            optimizer_result_scroll: 0,
+            optimizer_detail_scroll: 0,
             optimizer_rx: None,
             prev_mode: None,
             undo_stack: Vec::new(),
@@ -173,6 +177,7 @@ impl App {
                     Ok(OptimizeMsg::Done(results)) => {
                         self.optimizer_results = Some(results);
                         self.mode = Mode::OptimizeResult { cursor: 0 };
+                        self.optimizer_result_scroll = 0;
                         finished = true;
                         break;
                     }
@@ -445,6 +450,7 @@ impl App {
             }
             Action::Enter | Action::Right if n_results > 0 && cursor < n_results => {
                 self.mode = Mode::OptimizeDetail { combo_idx: cursor, cursor: 0 };
+                self.optimizer_detail_scroll = 0;
             }
             Action::Escape => {
                 self.mode = Mode::Home { cursor: 2 };
